@@ -5,8 +5,9 @@ export const DEFAULT_TRACKERS: Tracker[] = [
   {
     id: 'eating-out',
     name: 'Eating Out',
-    emoji: '🍜',
-    color: 'peach',
+    icon: 'utensils',
+    color: 'orange',
+    group: 'Food',
     budget: 150,
     unitCost: 15,
     unit: 'meal',
@@ -16,8 +17,9 @@ export const DEFAULT_TRACKERS: Tracker[] = [
   {
     id: 'coffee-boba',
     name: 'Coffee & Boba',
-    emoji: '🧋',
-    color: 'lavender',
+    icon: 'cupSoda',
+    color: 'violet',
+    group: 'Food',
     budget: 40,
     unitCost: 5,
     unit: 'drink',
@@ -30,8 +32,9 @@ export const DEFAULT_TRACKERS: Tracker[] = [
   {
     id: 'fun',
     name: 'Entertainment & Fun',
-    emoji: '🎟️',
-    color: 'mint',
+    icon: 'ticket',
+    color: 'emerald',
+    group: 'Fun',
     budget: 80,
     unitCost: 20,
     unit: 'hangout',
@@ -84,4 +87,9 @@ export function trackerStats(tracker: Tracker, txs: Transaction[]): TrackerStats
     count: txs.filter((t) => t.amount > 0).length,
     ratio: tracker.budget > 0 ? spent / tracker.budget : spent > 0 ? 1 : 0,
   }
+}
+
+/** Group names in first-seen order, so groups keep a stable position as trackers change. */
+export function trackerGroups(trackers: Tracker[]): string[] {
+  return [...new Set(trackers.map((t) => t.group.trim() || 'Other'))]
 }

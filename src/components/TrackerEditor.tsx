@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
-import { EMOJI_CHOICES, TRACKER_COLORS } from '../lib/colors'
-import { CATEGORIES, COLORS, NON_SPENDING, type Category, type Tracker } from '../lib/types'
+import { CATEGORIES, NON_SPENDING, type Category, type Tracker } from '../lib/types'
 import { money, plural, uid } from '../lib/util'
-import { Button, Field, Modal, cx, inputClass } from './ui'
+import { ColorPicker, IconPicker } from './pickers'
+import { Button, Field, IconTile, Modal, cx, inputClass } from './ui'
 
 interface Props {
   /** Tracker to edit, or `null` to create a new one. Modal is closed when `undefined`. */
   tracker: Tracker | null | undefined
+  /** Existing group names, offered as suggestions. */
+  groups: string[]
+  /** Group to preselect for a new tracker. */
+  defaultGroup?: string
   onSave: (t: Tracker) => void
   onDelete: (id: string) => void
   onClose: () => void
@@ -15,8 +19,9 @@ interface Props {
 const BLANK: Tracker = {
   id: '',
   name: '',
-  emoji: '🧋',
-  color: 'pink',
+  icon: 'shoppingBag',
+  color: 'rose',
+  group: '',
   budget: 50,
   unitCost: 10,
   unit: 'trip',
@@ -24,15 +29,16 @@ const BLANK: Tracker = {
   categories: [],
 }
 
-export function TrackerEditor({ tracker, onSave, onDelete, onClose }: Props) {
+export function TrackerEditor({ tracker, groups, defaultGroup, onSave, onDelete, onClose }: Props) {
   const [draft, setDraft] = useState<Tracker>(BLANK)
   const [keywordText, setKeywordText] = useState('')
 
   useEffect(() => {
     if (tracker === undefined) return
-    const t = tracker ?? { ...BLANK, id: uid() }
+    const t = tracker ?? { ...BLANK, id: uid(), group: defaultGroup ?? groups[0] ?? 'General' }
     setDraft(t)
     setKeywordText(t.keywords.join(', '))
+    // Only reset when the modal opens for a different tracker, not when groups change.
   }, [tracker])
 
   const set = <K extends keyof Tracker>(k: K, v: Tracker[K]) => setDraft((d) => ({ ...d, [k]: v }))
@@ -47,6 +53,7 @@ export function TrackerEditor({ tracker, onSave, onDelete, onClose }: Props) {
     onSave({
       ...draft,
       name: draft.name.trim(),
+      group: draft.group.trim() || 'General',
       unit: draft.unit.trim().toLowerCase(),
       keywords: keywordText.split(',').map((k) => k.trim()).filter(Boolean),
     })
@@ -56,19 +63,46 @@ export function TrackerEditor({ tracker, onSave, onDelete, onClose }: Props) {
   return (
     <Modal open={tracker !== undefined} onClose={onClose} title={tracker ? 'Edit tracker' : 'New tracker'}>
       <div className="space-y-4">
-        <div className={cx('flex items-center gap-3 rounded-2xl p-4 ring-1', TRACKER_COLORS[draft.color].card, TRACKER_COLORS[draft.color].ring)}>
-          <span className="text-3xl">{draft.emoji}</span>
+        <div className="flex items-center gap-3 rounded-xl bg-zinc-50 p-3 dark:bg-white/[0.03]">
+          <IconTile icon={draft.icon} color={draft.color} />
           <div className="text-sm">
-            <div className="font-bold">{draft.name || 'Your tracker'}</div>
-            <div className="text-slate-600 dark:text-slate-300">
-              {money(draft.budget || 0, true)} = <b>{times}</b> {plural(draft.unit || 'thing', times)} a month
+            <div className="font-semibold">{draft.name || 'Untitled tracker'}</div>
+            <div className="text-zinc-500 dark:text-zinc-400">
+              {money(draft.budget || 0, true)} a month = <b className="text-zinc-900 dark:text-zinc-100">{times}</b> {plural(draft.unit || 'thing', times)}
             </div>
           </div>
         </div>
 
-        <Field label="Name">
-          <input className={inputClass} value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder="Thrift Store Trips" autoFocus />
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Name">
+            <input className={inputClass} value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder="Thrift trips" autoFocus />
+          </Field>
+          <Field label="Group">
+            <input className={inputClass} list="tracker-groups" value={draft.group} onChange={(e) => set('group', e.target.value)} placeholder="Shopping" />
+            <datalist id="tracker-groups">
+              {groups.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+          </Field>
+        </div>
+        {groups.length > 0 && (
+          <div className="-mt-2 flex flex-wrap gap-1.5">
+            {groups.map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => set('group', g)}
+                className={cx(
+                  'rounded-md px-2 py-0.5 text-xs font-medium transition',
+                  draft.group === g ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-white/5 dark:text-zinc-300',
+                )}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-3">
           <Field label="Monthly budget">
@@ -83,35 +117,14 @@ export function TrackerEditor({ tracker, onSave, onDelete, onClose }: Props) {
         </div>
 
         <Field label="Icon">
-          <div className="flex flex-wrap gap-1.5">
-            {EMOJI_CHOICES.map((e) => (
-              <button
-                key={e}
-                type="button"
-                onClick={() => set('emoji', e)}
-                className={cx('grid size-10 place-items-center rounded-xl text-xl transition hover:scale-110', draft.emoji === e ? 'bg-violet-200 dark:bg-violet-400/30' : 'bg-slate-100 dark:bg-white/5')}
-              >
-                {e}
-              </button>
-            ))}
-          </div>
+          <IconPicker value={draft.icon} color={draft.color} onChange={(v) => set('icon', v)} />
         </Field>
 
         <Field label="Color">
-          <div className="flex gap-2">
-            {COLORS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                aria-label={c}
-                onClick={() => set('color', c)}
-                className={cx('size-9 rounded-full transition', TRACKER_COLORS[c].swatch, draft.color === c ? 'scale-110 ring-4 ring-violet-400/50' : 'hover:scale-105')}
-              />
-            ))}
-          </div>
+          <ColorPicker value={draft.color} onChange={(v) => set('color', v)} />
         </Field>
 
-        <Field label="Counts purchases matching" hint="Comma-separated words found in the transaction description, e.g. goodwill, depop, thrift">
+        <Field label="Count purchases whose description contains" hint="Comma-separated, e.g. goodwill, depop, thrift">
           <input className={inputClass} value={keywordText} onChange={(e) => setKeywordText(e.target.value)} placeholder="goodwill, depop, thrift" />
         </Field>
 
@@ -123,8 +136,10 @@ export function TrackerEditor({ tracker, onSave, onDelete, onClose }: Props) {
                 type="button"
                 onClick={() => toggleCategory(c)}
                 className={cx(
-                  'rounded-full px-3 py-1 text-xs font-semibold transition',
-                  draft.categories.includes(c) ? 'bg-violet-500 text-white dark:bg-violet-400 dark:text-violet-950' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/5 dark:text-slate-300',
+                  'rounded-md border px-2.5 py-1 text-xs font-medium transition',
+                  draft.categories.includes(c)
+                    ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
+                    : 'border-zinc-200 text-zinc-600 hover:border-zinc-400 dark:border-white/10 dark:text-zinc-300',
                 )}
               >
                 {c}

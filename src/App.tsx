@@ -1,26 +1,50 @@
+import {
+  ArrowDownToLine,
+  ChartColumn,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Flag,
+  LayoutGrid,
+  List,
+  Lock,
+  Moon,
+  Plus,
+  Receipt,
+  Settings as SettingsIcon,
+  Sun,
+  Target,
+  type LucideIcon,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Activity } from './components/Activity'
 import { Breakdown } from './components/Breakdown'
 import { Confetti } from './components/Confetti'
+import { Goals } from './components/Goals'
 import { ImportPanel } from './components/ImportPanel'
 import { TrackerCard } from './components/TrackerCard'
 import { TrackerEditor } from './components/TrackerEditor'
-import { Button, Card, Field, Modal, cx, inputClass } from './components/ui'
+import { TrackerList } from './components/TrackerList'
+import { Button, Card, EmptyState, Field, IconButton, Modal, Segmented, cx, inputClass } from './components/ui'
 import { useAppData } from './hooks/useAppData'
 import { dedupe } from './lib/csv'
 import { cycleEnd, cycleKey, cycleLabel, cycleProgress, inCycle, shiftCycle } from './lib/cycles'
-import { makeTrackerAssigner, trackerStats } from './lib/trackers'
-import type { Tracker, Transaction } from './lib/types'
+import { inTrackerUnits } from './lib/goals'
+import { makeTrackerAssigner, trackerGroups, trackerStats, type TrackerStats } from './lib/trackers'
+import type { Goal, Theme, Tracker, Transaction } from './lib/types'
 import { money, plural, todayISO, uid } from './lib/util'
 
-type Tab = 'trackers' | 'breakdown' | 'activity' | 'import'
+type Tab = 'trackers' | 'goals' | 'breakdown' | 'activity' | 'import'
 
-const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: 'trackers', label: 'Trackers', icon: '🎯' },
-  { id: 'breakdown', label: 'Breakdown', icon: '📊' },
-  { id: 'activity', label: 'Activity', icon: '🧾' },
-  { id: 'import', label: 'Import', icon: '📥' },
+const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
+  { id: 'trackers', label: 'Trackers', icon: Target },
+  { id: 'goals', label: 'Goals', icon: Flag },
+  { id: 'breakdown', label: 'Breakdown', icon: ChartColumn },
+  { id: 'activity', label: 'Activity', icon: Receipt },
+  { id: 'import', label: 'Import', icon: ArrowDownToLine },
 ]
+
+const ALL = '__all__'
 
 interface Toast {
   id: string
@@ -30,12 +54,13 @@ interface Toast {
 
 export default function App() {
   const store = useAppData()
-  const { transactions, trackers, settings } = store.data
+  const { transactions, trackers, goals, settings } = store.data
   const today = todayISO()
   const currentCycle = cycleKey(today, settings.cycleStartDay)
 
   const [tab, setTab] = useState<Tab>(() => (transactions.length ? 'trackers' : 'import'))
   const [cycle, setCycle] = useState(currentCycle)
+  const [groupFilter, setGroupFilter] = useState(ALL)
   const [editing, setEditing] = useState<Tracker | null | undefined>(undefined)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -58,6 +83,10 @@ export default function App() {
     return () => clearTimeout(t)
   }, [toast])
 
+  const groups = useMemo(() => trackerGroups(trackers), [trackers])
+  // Fall back to "All" if the selected group disappears (last tracker moved or deleted).
+  const activeGroup = groupFilter !== ALL && groups.includes(groupFilter) ? groupFilter : ALL
+
   const assign = useMemo(() => makeTrackerAssigner(trackers), [trackers])
   const cycleTxs = useMemo(() => transactions.filter((t) => inCycle(t.date, cycle)), [transactions, cycle])
 
@@ -70,6 +99,15 @@ export default function App() {
     return new Map(trackers.map((t) => [t.id, trackerStats(t, buckets.get(t.id) ?? [])]))
   }, [trackers, cycleTxs, assign])
 
+  const visibleGroups = useMemo(
+    () =>
+      (activeGroup === ALL ? groups : [activeGroup]).map((name) => ({
+        name,
+        trackers: trackers.filter((t) => (t.group.trim() || 'Other') === name),
+      })),
+    [groups, activeGroup, trackers],
+  )
+
   const cycleEnded = cycleEnd(cycle) < today
   const progress = cycleProgress(cycle, today)
   const logDate = inCycle(today, cycle) ? today : cycleEnded ? cycleEnd(cycle) : cycle
@@ -80,7 +118,7 @@ export default function App() {
     const tx: Transaction = {
       id: uid(),
       date: logDate,
-      description: `${tracker.emoji} ${tracker.name}`,
+      description: tracker.name,
       amount: tracker.unitCost,
       category: tracker.categories[0] ?? 'Other',
       source: 'manual',
@@ -89,7 +127,7 @@ export default function App() {
     store.addTransactions([tx])
     const left = (stats.get(tracker.id)?.timesLeft ?? 0) - 1
     showToast(
-      left >= 0 ? `Logged 1 ${tracker.unit} · ${left} ${plural(tracker.unit, left)} left` : `Logged 1 ${tracker.unit} · over budget 😬`,
+      left >= 0 ? `Logged 1 ${tracker.unit}. ${left} ${plural(tracker.unit, left)} left.` : `Logged 1 ${tracker.unit}. You're over budget.`,
       () => store.deleteTransactions([tx.id]),
     )
   }
@@ -104,103 +142,167 @@ export default function App() {
     }
     setTab('trackers')
     showToast(
-      `Imported ${added.length} ${plural('transaction', added.length)}${skipped ? ` · ${skipped} duplicates skipped` : ''}`,
+      `Imported ${added.length} ${plural('transaction', added.length)}${skipped ? `, skipped ${skipped} duplicates` : ''}`,
       added.length ? () => store.deleteTransactions(added.map((t) => t.id)) : undefined,
     )
   }
 
   return (
-    <div className="mx-auto min-h-dvh max-w-6xl px-4 pb-28 pt-4 sm:px-6 sm:pb-12">
+    <div className="mx-auto min-h-dvh max-w-6xl px-4 pb-28 pt-5 sm:px-6 sm:pb-12">
       <header className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className="grid size-10 place-items-center rounded-2xl bg-gradient-to-br from-violet-300 to-pink-300 text-xl font-extrabold text-violet-950 shadow-md shadow-violet-300/40 dark:shadow-none">$</div>
-          <div>
-            <h1 className="text-xl font-extrabold leading-none tracking-tight">
-              spen<span className="text-violet-500 dark:text-violet-300">DANG</span>
-            </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">how many times can you?</p>
-          </div>
-        </div>
+        <h1 className="font-display text-2xl font-extrabold tracking-tight">
+          spen<span className="relative px-0.5 before:absolute before:inset-x-0 before:bottom-1 before:-z-10 before:h-3 before:-rotate-1 before:rounded-sm before:bg-lime-300 dark:before:bg-lime-400/70">DANG</span>
+        </h1>
         <div className="flex items-center gap-1">
           <ThemeToggle theme={settings.theme} onChange={(theme) => store.updateSettings({ theme })} />
-          <button onClick={() => setSettingsOpen(true)} className="grid size-10 place-items-center rounded-full text-lg hover:bg-violet-100 dark:hover:bg-white/10" aria-label="Settings">
-            ⚙️
-          </button>
+          <IconButton icon={SettingsIcon} label="Settings" onClick={() => setSettingsOpen(true)} />
         </div>
       </header>
 
-      <nav className="mt-6 hidden gap-1 rounded-full bg-violet-100/70 p-1 sm:inline-flex dark:bg-white/5">
+      <nav className="mt-5 hidden border-b border-zinc-200 sm:flex dark:border-white/10">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             className={cx(
-              'rounded-full px-4 py-2 text-sm font-semibold transition',
-              tab === t.id ? 'bg-white text-violet-700 shadow-sm dark:bg-white/15 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white',
+              '-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-medium transition',
+              tab === t.id ? 'border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
             )}
           >
-            {t.icon} {t.label}
+            <t.icon className="size-4" />
+            {t.label}
           </button>
         ))}
       </nav>
 
-      {tab !== 'import' && (
+      {(tab === 'trackers' || tab === 'breakdown' || tab === 'activity') && (
         <div className="mt-5 flex items-center justify-between gap-2">
-          <button onClick={() => setCycle((c) => shiftCycle(c, -1))} className="grid size-10 place-items-center rounded-full bg-white shadow-sm hover:bg-violet-50 dark:bg-white/5 dark:hover:bg-white/10" aria-label="Previous cycle">
-            ‹
-          </button>
-          <div className="text-center">
-            <div className="text-lg font-extrabold">{cycleLabel(cycle)}</div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              {cycle === currentCycle ? `${Math.round(progress * 100)}% through this cycle` : cycleEnded ? 'Finished cycle' : 'Upcoming'}
+          <div>
+            <div className="font-display text-2xl font-bold tracking-tight">{cycleLabel(cycle)}</div>
+            <div className="text-[13px] text-zinc-500 dark:text-zinc-400">
+              {cycle === currentCycle ? `${Math.round(progress * 100)}% through this cycle` : cycleEnded ? 'Finished cycle' : 'Upcoming cycle'}
               {cycle !== currentCycle && (
-                <button onClick={() => setCycle(currentCycle)} className="ml-2 font-semibold text-violet-600 hover:underline dark:text-violet-300">
+                <button onClick={() => setCycle(currentCycle)} className="ml-2 font-medium text-zinc-900 underline underline-offset-2 dark:text-zinc-100">
                   Back to now
                 </button>
               )}
             </div>
           </div>
-          <button onClick={() => setCycle((c) => shiftCycle(c, 1))} className="grid size-10 place-items-center rounded-full bg-white shadow-sm hover:bg-violet-50 dark:bg-white/5 dark:hover:bg-white/10" aria-label="Next cycle">
-            ›
-          </button>
+          <div className="flex gap-1">
+            <IconButton icon={ChevronLeft} label="Previous cycle" className="border border-zinc-200 dark:border-white/10" onClick={() => setCycle((c) => shiftCycle(c, -1))} />
+            <IconButton icon={ChevronRight} label="Next cycle" className="border border-zinc-200 dark:border-white/10" onClick={() => setCycle((c) => shiftCycle(c, 1))} />
+          </div>
         </div>
       )}
 
       <main className="mt-5 animate-rise" key={tab}>
         {tab === 'trackers' && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             {!transactions.length && (
               <Card className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <div className="font-bold">👋 Welcome! Your trackers are ready.</div>
-                  <div className="text-sm text-slate-500 dark:text-slate-400">Import a statement to fill them with real spending, or tap +1 whenever you treat yourself.</div>
+                  <div className="font-semibold">Your trackers are set up</div>
+                  <div className="text-sm text-zinc-500 dark:text-zinc-400">Import a statement to fill them with real spending, or log a purchase with the + button.</div>
                 </div>
-                <Button onClick={() => setTab('import')}>Import statement</Button>
+                <Button icon={ArrowDownToLine} onClick={() => setTab('import')}>
+                  Import statement
+                </Button>
               </Card>
             )}
-            <SwapCard key={celebrateKey} trackers={trackers} stats={stats} cycleEnded={cycleEnded} celebrate={celebrateKey > 0} />
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {trackers.map((t) => (
-                <TrackerCard
-                  key={t.id}
-                  tracker={t}
-                  stats={stats.get(t.id)!}
-                  cycleEnded={cycleEnded}
-                  cycleProgress={progress}
-                  onLog={() => logOne(t)}
-                  onEdit={() => setEditing(t)}
+
+            <LeftoverCard
+              key={celebrateKey}
+              cycle={cycle}
+              trackers={trackers}
+              stats={stats}
+              goals={goals}
+              cycleEnded={cycleEnded}
+              celebrate={celebrateKey > 0}
+              onSweep={(goal, amount) => {
+                const id = uid()
+                store.addContribution(goal.id, { id, date: today, amount, note: `Leftover from ${cycleLabel(cycle)}`, fromCycle: cycle })
+                showToast(`Moved ${money(amount)} to ${goal.name}`, () => store.removeContribution(goal.id, id))
+              }}
+            />
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Tracker groups">
+                {[ALL, ...groups].map((g) => {
+                  const count = g === ALL ? trackers.length : trackers.filter((t) => (t.group.trim() || 'Other') === g).length
+                  const active = activeGroup === g
+                  return (
+                    <button
+                      key={g}
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setGroupFilter(g)}
+                      className={cx(
+                        'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition',
+                        active
+                          ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
+                          : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-400 dark:border-white/10 dark:bg-transparent dark:text-zinc-300',
+                      )}
+                    >
+                      {g === ALL ? 'All' : g}
+                      <span className={cx('tabular-nums', active ? 'opacity-60' : 'text-zinc-400')}>{count}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex items-center gap-2">
+                <Segmented
+                  value={settings.trackerView}
+                  onChange={(trackerView) => store.updateSettings({ trackerView })}
+                  options={[
+                    { value: 'cards', title: 'Card view', label: <LayoutGrid className="size-4" /> },
+                    { value: 'list', title: 'List view', label: <List className="size-4" /> },
+                  ]}
                 />
-              ))}
-              <button
-                onClick={() => setEditing(null)}
-                className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-3xl border-2 border-dashed border-violet-200 text-slate-500 transition hover:border-violet-400 hover:bg-violet-50 hover:text-violet-700 dark:border-white/10 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-violet-200"
-              >
-                <span className="text-3xl">＋</span>
-                <span className="font-semibold">New tracker</span>
-                <span className="text-xs">Boba runs, thrift trips, concerts…</span>
-              </button>
+                <Button icon={Plus} onClick={() => setEditing(null)}>
+                  New tracker
+                </Button>
+              </div>
             </div>
+
+            {!trackers.length ? (
+              <Card>
+                <EmptyState icon={Target} title="No trackers">
+                  Create one for anything you want to count: boba runs, thrift trips, concerts.
+                </EmptyState>
+              </Card>
+            ) : settings.trackerView === 'list' ? (
+              <TrackerList groups={visibleGroups} stats={stats} showGroupHeaders={activeGroup === ALL && groups.length > 1} onLog={logOne} onEdit={setEditing} />
+            ) : (
+              visibleGroups.map((g) => (
+                <section key={g.name} className="space-y-3">
+                  {(activeGroup === ALL ? groups.length > 1 : true) && <GroupHeader name={g.name} trackers={g.trackers} stats={stats} />}
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {g.trackers.map((t) => (
+                      <TrackerCard
+                        key={t.id}
+                        tracker={t}
+                        stats={stats.get(t.id)!}
+                        cycleEnded={cycleEnded}
+                        cycleProgress={progress}
+                        onLog={() => logOne(t)}
+                        onEdit={() => setEditing(t)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))
+            )}
           </div>
+        )}
+        {tab === 'goals' && (
+          <Goals
+            goals={goals}
+            trackers={trackers}
+            onSave={store.saveGoal}
+            onDelete={store.deleteGoal}
+            onContribute={store.addContribution}
+            onRemoveContribution={store.removeContribution}
+          />
         )}
         {tab === 'breakdown' && (
           <Breakdown cycle={cycle} cycleTxs={cycleTxs} allTxs={transactions} cycleStartDay={settings.cycleStartDay} onPickCycle={setCycle} />
@@ -228,11 +330,15 @@ export default function App() {
       </main>
 
       {/* Mobile bottom nav */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-violet-100 bg-white/90 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden dark:border-white/5 dark:bg-[#14121c]/90">
-        <div className="grid grid-cols-4">
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden dark:border-white/10 dark:bg-ink/95">
+        <div className="grid grid-cols-5">
           {TABS.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)} className={cx('flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-semibold transition', tab === t.id ? 'text-violet-600 dark:text-violet-300' : 'text-slate-400')}>
-              <span className={cx('text-xl transition', tab === t.id && 'scale-110')}>{t.icon}</span>
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={cx('flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium transition', tab === t.id ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-400')}
+            >
+              <t.icon className="size-5" strokeWidth={tab === t.id ? 2.4 : 1.8} />
               {t.label}
             </button>
           ))}
@@ -240,11 +346,15 @@ export default function App() {
       </nav>
 
       {toast && (
-        <div key={toast.id} className="fixed inset-x-4 bottom-24 z-50 mx-auto flex max-w-md items-center justify-between gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-sm text-white shadow-xl animate-rise sm:bottom-6 dark:bg-white dark:text-slate-900" role="status">
+        <div
+          key={toast.id}
+          className="fixed inset-x-4 bottom-24 z-50 mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl bg-zinc-900 px-4 py-3 text-sm text-white shadow-lg animate-rise sm:bottom-6 dark:bg-zinc-100 dark:text-zinc-900"
+          role="status"
+        >
           <span>{toast.message}</span>
           {toast.undo && (
             <button
-              className="shrink-0 font-bold text-violet-300 hover:underline dark:text-violet-600"
+              className="shrink-0 font-semibold text-lime-300 hover:underline dark:text-lime-700"
               onClick={() => {
                 toast.undo?.()
                 setToast(null)
@@ -256,11 +366,18 @@ export default function App() {
         </div>
       )}
 
-      <TrackerEditor tracker={editing} onSave={store.saveTracker} onDelete={store.deleteTracker} onClose={() => setEditing(undefined)} />
+      <TrackerEditor
+        tracker={editing}
+        groups={groups}
+        defaultGroup={activeGroup === ALL ? undefined : activeGroup}
+        onSave={store.saveTracker}
+        onDelete={store.deleteTracker}
+        onClose={() => setEditing(undefined)}
+      />
 
       <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings">
         <div className="space-y-5">
-          <Field label="Billing cycle starts on day" hint="Match your card's statement date. Day 1 = regular calendar months.">
+          <Field label="Billing cycle starts on day" hint="Match your card's statement date. Day 1 means regular calendar months.">
             <select className={inputClass} value={settings.cycleStartDay} onChange={(e) => store.updateSettings({ cycleStartDay: +e.target.value })}>
               {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
                 <option key={d} value={d}>
@@ -270,19 +387,23 @@ export default function App() {
             </select>
           </Field>
           <Field label="Theme">
-            <select className={inputClass} value={settings.theme} onChange={(e) => store.updateSettings({ theme: e.target.value as typeof settings.theme })}>
+            <select className={inputClass} value={settings.theme} onChange={(e) => store.updateSettings({ theme: e.target.value as Theme })}>
               <option value="system">Match my device</option>
               <option value="light">Light</option>
               <option value="dark">Dark</option>
             </select>
           </Field>
-          <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 dark:bg-white/5 dark:text-slate-300">
-            🔒 Your data lives only in this browser. {transactions.length} {plural('transaction', transactions.length)} stored.
+          <div className="flex gap-2.5 rounded-xl bg-zinc-50 p-3 text-sm text-zinc-600 dark:bg-white/[0.03] dark:text-zinc-300">
+            <Lock className="mt-0.5 size-4 shrink-0" />
+            <span>
+              Your data stays in this browser. {transactions.length} {plural('transaction', transactions.length)}, {trackers.length} {plural('tracker', trackers.length)} and {goals.length}{' '}
+              {plural('goal', goals.length)} stored.
+            </span>
           </div>
           <Button
             variant="danger"
             onClick={() => {
-              if (confirm('Erase all transactions and reset trackers? This cannot be undone.')) {
+              if (confirm('Erase all transactions, trackers and goals? This cannot be undone.')) {
                 store.resetAll()
                 setSettingsOpen(false)
                 setTab('import')
@@ -297,48 +418,91 @@ export default function App() {
   )
 }
 
-/** "Your leftover fun money = 9 drinks or 3 meals or 1 hangout" */
-function SwapCard({ trackers, stats, cycleEnded, celebrate }: { trackers: Tracker[]; stats: Map<string, ReturnType<typeof trackerStats>>; cycleEnded: boolean; celebrate: boolean }) {
+function GroupHeader({ name, trackers, stats }: { name: string; trackers: Tracker[]; stats: Map<string, TrackerStats> }) {
+  const budget = trackers.reduce((s, t) => s + t.budget, 0)
+  const left = trackers.reduce((s, t) => s + (stats.get(t.id)?.remaining ?? 0), 0)
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <h2 className="font-display text-lg font-bold tracking-tight">{name}</h2>
+      <span className={cx('text-[13px] tabular-nums', left < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400')}>
+        {left < 0 ? `${money(-left)} over a ${money(budget, true)} budget` : `${money(left)} left of ${money(budget, true)}`}
+      </span>
+    </div>
+  )
+}
+
+/** Remaining tracker money, translated into units, with the option to sweep a finished cycle's leftovers into a goal. */
+function LeftoverCard({
+  cycle,
+  trackers,
+  stats,
+  goals,
+  cycleEnded,
+  celebrate,
+  onSweep,
+}: {
+  cycle: string
+  trackers: Tracker[]
+  stats: Map<string, TrackerStats>
+  goals: Goal[]
+  cycleEnded: boolean
+  celebrate: boolean
+  onSweep: (goal: Goal, amount: number) => void
+}) {
+  const [goalId, setGoalId] = useState('')
   if (!trackers.length) return null
-  const left = trackers.reduce((s, t) => s + Math.max(0, stats.get(t.id)?.remaining ?? 0), 0)
+  const left = Math.round(trackers.reduce((s, t) => s + Math.max(0, stats.get(t.id)?.remaining ?? 0), 0) * 100) / 100
   const allUnder = trackers.every((t) => (stats.get(t.id)?.remaining ?? 0) >= 0)
   const anySpent = trackers.some((t) => (stats.get(t.id)?.spent ?? 0) > 0)
-  const swaps = trackers
-    .filter((t) => t.unitCost > 0)
-    .map((t) => {
-      const n = Math.floor(left / t.unitCost)
-      return `${n} ${plural(t.unit, n)}`
-    })
+  const units = inTrackerUnits(left, trackers, 3)
+  const swept = goals.flatMap((g) => g.contributions.filter((c) => c.fromCycle === cycle).map((c) => ({ goal: g, c })))
+  const target = goals.find((g) => g.id === goalId) ?? goals[0]
 
   return (
-    <Card className="relative overflow-visible bg-gradient-to-br from-violet-100 via-pink-50 to-amber-50 dark:from-violet-500/15 dark:via-pink-500/10 dark:to-amber-500/5">
-      {celebrate && allUnder && anySpent && <Confetti count={24} />}
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{cycleEnded ? 'Left over this cycle' : 'Fun money left'}</div>
-      <div className="mt-1 text-4xl font-extrabold tabular-nums">{money(left)}</div>
-      <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-        That's {swaps.slice(0, -1).join(', ')}
-        {swaps.length > 1 ? ' or ' : ''}
-        <b>{swaps[swaps.length - 1]}</b>.
-        {cycleEnded && allUnder && anySpent && ' You stayed under on every tracker 🎉'}
-      </p>
+    <Card className="relative">
+      {celebrate && allUnder && anySpent && <Confetti count={26} />}
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="text-[13px] text-zinc-500 dark:text-zinc-400">{cycleEnded ? 'Left over from this cycle' : 'Left to spend this cycle'}</div>
+          <div className="mt-0.5 font-display text-4xl font-bold tracking-tight tabular-nums">{money(left)}</div>
+          {units && <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">That's {units}.</p>}
+          {cycleEnded && allUnder && anySpent && <p className="mt-1 text-sm font-medium text-lime-700 dark:text-lime-300">You stayed under on every tracker.</p>}
+        </div>
+
+        {cycleEnded && left > 0 && goals.length > 0 && (
+          <div className="w-full sm:w-auto">
+            {swept.length ? (
+              <div className="inline-flex items-center gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-sm dark:bg-white/[0.04]">
+                <Check className="size-4 text-lime-600 dark:text-lime-400" />
+                Moved {money(swept.reduce((s, x) => s + x.c.amount, 0))} to {swept.map((x) => x.goal.name).join(', ')}
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <select className={cx(inputClass, 'sm:w-44')} value={target.id} onChange={(e) => setGoalId(e.target.value)} aria-label="Goal to move leftovers to">
+                  {goals.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+                <Button className="shrink-0" onClick={() => onSweep(target, left)}>
+                  Move to goal
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </Card>
   )
 }
 
-function ThemeToggle({ theme, onChange }: { theme: 'light' | 'dark' | 'system'; onChange: (t: 'light' | 'dark') => void }) {
+function ThemeToggle({ theme, onChange }: { theme: Theme; onChange: (t: Theme) => void }) {
   const isDark = theme === 'dark' || (theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-  return (
-    <button
-      onClick={() => onChange(isDark ? 'light' : 'dark')}
-      className="grid size-10 place-items-center rounded-full text-lg transition hover:rotate-12 hover:bg-violet-100 dark:hover:bg-white/10"
-      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-    >
-      {isDark ? '🌙' : '☀️'}
-    </button>
-  )
+  return <IconButton icon={isDark ? Moon : Sun} label={isDark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={() => onChange(isDark ? 'light' : 'dark')} />
 }
 
-function useTheme(theme: 'light' | 'dark' | 'system') {
+function useTheme(theme: Theme) {
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const apply = () => document.documentElement.classList.toggle('dark', theme === 'dark' || (theme === 'system' && mq.matches))

@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
-import { CATEGORY_STYLE } from '../lib/colors'
+import { CalendarX2, TrendingDown, TrendingUp } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { cycleKey, cycleLabel, shiftCycle } from '../lib/cycles'
+import { CATEGORY_ICONS } from '../lib/icons'
 import { NON_SPENDING, type Category, type Transaction } from '../lib/types'
 import { money } from '../lib/util'
 import { Card, EmptyState, cx } from './ui'
@@ -62,59 +63,78 @@ export function Breakdown({ cycle, cycleTxs, allTxs, cycleStartDay, onPickCycle 
   if (!cycleTxs.length) {
     return (
       <Card>
-        <EmptyState emoji="🗓️" title={`Nothing in ${cycleLabel(cycle)} yet`}>
+        <EmptyState icon={CalendarX2} title={`Nothing in ${cycleLabel(cycle)} yet`}>
           Import a statement or step to another cycle with the arrows above.
         </EmptyState>
       </Card>
     )
   }
 
+  const TopIcon = byCategory[0] ? CATEGORY_ICONS[byCategory[0][0]] : null
+
   return (
     <div className="grid gap-4 lg:grid-cols-5">
       <div className="grid grid-cols-2 gap-3 lg:col-span-5 lg:grid-cols-4">
-        <Stat label="Spent" value={money(spent)} sub={delta === null ? undefined : `${delta > 0 ? '▲' : '▼'} ${Math.abs(delta * 100).toFixed(0)}% vs last cycle`} />
+        <Stat label="Spent" value={money(spent)}>
+          {delta !== null && (
+            <span className="inline-flex items-center gap-1">
+              {delta > 0 ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
+              {Math.abs(delta * 100).toFixed(0)}% vs last cycle
+            </span>
+          )}
+        </Stat>
         <Stat label="Money in" value={money(moneyIn)} />
-        <Stat label="Purchases" value={String(purchases)} sub={purchases ? `avg ${money(spent / purchases)}` : undefined} />
-        <Stat label="Top category" value={byCategory[0] ? `${CATEGORY_STYLE[byCategory[0][0]].emoji} ${byCategory[0][0]}` : '—'} small />
+        <Stat label="Purchases" value={String(purchases)}>
+          {purchases > 0 && `avg ${money(spent / purchases)}`}
+        </Stat>
+        <Stat label="Top category" value={byCategory[0]?.[0] ?? '—'} small>
+          {TopIcon && <TopIcon className="size-4" />}
+        </Stat>
       </div>
 
       <Card className="lg:col-span-3">
-        <h3 className="mb-4 font-bold">Where it went</h3>
-        <ul className="space-y-3">
-          {byCategory.map(([cat, total]) => (
-            <li key={cat}>
-              <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
-                <span className="font-semibold">
-                  {CATEGORY_STYLE[cat].emoji} {cat}
+        <h3 className="mb-4 font-semibold">Where it went</h3>
+        <ul className="space-y-3.5">
+          {byCategory.map(([cat, total]) => {
+            const Icon = CATEGORY_ICONS[cat]
+            return (
+              <li key={cat} className="flex items-center gap-3">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-zinc-100 text-zinc-600 dark:bg-white/5 dark:text-zinc-300">
+                  <Icon className="size-4" />
                 </span>
-                <span className="tabular-nums text-slate-500 dark:text-slate-400">
-                  {money(total)} <span className="text-xs">· {((total / spent) * 100).toFixed(0)}%</span>
-                </span>
-              </div>
-              <div className="h-2.5 rounded-full bg-violet-50 dark:bg-white/5">
-                <div className="h-full rounded-full bg-violet-400 transition-[width] duration-700 ease-out dark:bg-violet-300" style={{ width: `${(total / maxCat) * 100}%` }} />
-              </div>
-            </li>
-          ))}
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
+                    <span className="truncate font-medium">{cat}</span>
+                    <span className="shrink-0 tabular-nums">
+                      {money(total)} <span className="text-xs text-zinc-500">{((total / spent) * 100).toFixed(0)}%</span>
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-white/[0.06]">
+                    <div className="h-full rounded-full bg-zinc-800 transition-[width] duration-700 ease-out dark:bg-zinc-300" style={{ width: `${(total / maxCat) * 100}%` }} />
+                  </div>
+                </div>
+              </li>
+            )
+          })}
         </ul>
       </Card>
 
       <div className="grid gap-4 lg:col-span-2">
         <Card>
-          <h3 className="mb-1 font-bold">Last {HISTORY} cycles</h3>
-          <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">Total spending. Tap a bar to jump there.</p>
+          <h3 className="font-semibold">Last {HISTORY} cycles</h3>
+          <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">Total spending. Select a bar to jump there.</p>
           <HistoryBars history={history} max={maxHist} current={cycle} onPick={onPickCycle} />
         </Card>
 
         <Card>
-          <h3 className="mb-3 font-bold">Top spots</h3>
-          <ol className="space-y-2 text-sm">
+          <h3 className="mb-3 font-semibold">Top spots</h3>
+          <ol className="space-y-2.5 text-sm">
             {topMerchants.map(([name, { total, count }], i) => (
               <li key={name} className="flex items-center gap-3">
-                <span className="grid size-6 shrink-0 place-items-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-white/10 dark:text-violet-200">{i + 1}</span>
+                <span className="w-4 shrink-0 text-xs tabular-nums text-zinc-400">{i + 1}</span>
                 <span className="min-w-0 flex-1 truncate">{name}</span>
-                <span className="shrink-0 text-xs text-slate-400">×{count}</span>
-                <span className="w-20 shrink-0 text-right font-semibold tabular-nums">{money(total)}</span>
+                <span className="shrink-0 text-xs text-zinc-500">{count}×</span>
+                <span className="w-20 shrink-0 text-right font-medium tabular-nums">{money(total)}</span>
               </li>
             ))}
           </ol>
@@ -124,27 +144,26 @@ export function Breakdown({ cycle, cycleTxs, allTxs, cycleStartDay, onPickCycle 
   )
 }
 
-function Stat({ label, value, sub, small }: { label: string; value: string; sub?: string; small?: boolean }) {
+function Stat({ label, value, small, children }: { label: string; value: string; small?: boolean; children?: ReactNode }) {
   return (
     <Card className="p-4">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</div>
-      <div className={cx('mt-1 font-extrabold tabular-nums', small ? 'text-base leading-tight' : 'text-2xl')}>{value}</div>
-      {sub && <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{sub}</div>}
+      <div className="text-[13px] text-zinc-500 dark:text-zinc-400">{label}</div>
+      <div className={cx('mt-1 font-display font-bold tracking-tight tabular-nums', small ? 'text-lg leading-tight' : 'text-2xl')}>{value}</div>
+      {children && <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{children}</div>}
     </Card>
   )
 }
 
 function HistoryBars({ history, max, current, onPick }: { history: { key: string; total: number }[]; max: number; current: string; onPick: (k: string) => void }) {
   const [hover, setHover] = useState<string | null>(null)
-  const focus = hover ?? current
-  const focused = history.find((h) => h.key === focus)
+  const focused = history.find((h) => h.key === (hover ?? current))
   return (
     <div>
       <div className="mb-2 h-5 text-sm">
         {focused && (
           <>
-            <span className="font-bold tabular-nums">{money(focused.total)}</span>{' '}
-            <span className="text-slate-500 dark:text-slate-400">in {cycleLabel(focused.key)}</span>
+            <span className="font-semibold tabular-nums">{money(focused.total)}</span>{' '}
+            <span className="text-zinc-500 dark:text-zinc-400">in {cycleLabel(focused.key)}</span>
           </>
         )}
       </div>
@@ -157,21 +176,21 @@ function HistoryBars({ history, max, current, onPick }: { history: { key: string
             onFocus={() => setHover(h.key)}
             onBlur={() => setHover(null)}
             aria-label={`${cycleLabel(h.key)}: ${money(h.total)}`}
-            className="group flex h-full flex-1 flex-col items-center justify-end gap-1"
+            className="group flex h-full flex-1 flex-col items-center justify-end"
           >
             <div
               className={cx(
                 'w-full max-w-10 rounded-t-[4px] transition-all duration-500',
-                h.key === current ? 'bg-violet-500 dark:bg-violet-300' : 'bg-violet-200 group-hover:bg-violet-300 dark:bg-violet-400/30 dark:group-hover:bg-violet-400/50',
+                h.key === current ? 'bg-zinc-900 dark:bg-zinc-100' : 'bg-zinc-200 group-hover:bg-zinc-300 dark:bg-white/15 dark:group-hover:bg-white/25',
               )}
               style={{ height: `${Math.max(2, (h.total / max) * 100)}%` }}
             />
           </button>
         ))}
       </div>
-      <div className="mt-1 flex gap-1.5 border-t border-slate-200 pt-1 dark:border-white/10">
+      <div className="mt-1 flex gap-1.5 border-t border-zinc-200 pt-1 dark:border-white/10">
         {history.map((h) => (
-          <span key={h.key} className={cx('flex-1 text-center text-[11px]', h.key === current ? 'font-bold' : 'text-slate-400')}>
+          <span key={h.key} className={cx('flex-1 text-center text-[11px]', h.key === current ? 'font-semibold' : 'text-zinc-400')}>
             {cycleLabel(h.key, true).split(' – ')[0].split(' ')[0]}
           </span>
         ))}

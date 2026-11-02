@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { categorize } from './categorize'
 import { analyzeCSV, dedupe, parseAmount, parseCSV, parseDate, rowToTransaction } from './csv'
 import { cycleEnd, cycleKey, cycleLabel, shiftCycle } from './cycles'
-import { DEFAULT_TRACKERS, makeTrackerAssigner, trackerStats } from './trackers'
+import { goalStats, inTrackerUnits } from './goals'
+import { DEFAULT_TRACKERS, makeTrackerAssigner, trackerGroups, trackerStats } from './trackers'
 import type { Transaction } from './types'
 
 const tx = (description: string, amount: number, extra: Partial<Transaction> = {}): Transaction => ({
@@ -142,5 +143,43 @@ describe('dedupe', () => {
     const { added, skipped } = dedupe(existing, [tx('A', 5), tx('A', 5), tx('B', 3)])
     expect(skipped).toBe(1)
     expect(added).toHaveLength(2)
+  })
+})
+
+describe('goals', () => {
+  const goal = (target: number, saved: number[], deadline?: string) => ({
+    id: 'g',
+    name: 'Trip',
+    icon: 'plane',
+    color: 'sky' as const,
+    target,
+    deadline,
+    contributions: saved.map((amount, i) => ({ id: String(i), date: '2026-10-01', amount })),
+  })
+
+  it('computes progress and monthly pace', () => {
+    const s = goalStats(goal(600, [100, 50], '2027-03-01'), '2026-11-01')
+    expect(s.saved).toBe(150)
+    expect(s.remaining).toBe(450)
+    expect(s.monthsLeft).toBe(4)
+    expect(s.perMonth).toBe(112.5)
+    expect(s.done).toBe(false)
+  })
+
+  it('handles finished, open-ended and overdue goals', () => {
+    expect(goalStats(goal(100, [60, 40]), '2026-11-01')).toMatchObject({ done: true, ratio: 1, perMonth: null })
+    expect(goalStats(goal(100, [10], '2026-10-01'), '2026-11-01')).toMatchObject({ overdue: true, monthsLeft: 1, perMonth: 90 })
+  })
+
+  it('expresses amounts in tracker units, cheapest first', () => {
+    expect(inTrackerUnits(45, DEFAULT_TRACKERS)).toBe('9 drinks or 3 meals')
+    expect(inTrackerUnits(2, DEFAULT_TRACKERS)).toBeNull()
+  })
+})
+
+describe('trackerGroups', () => {
+  it('keeps first-seen order and fills blanks', () => {
+    const t = (group: string) => ({ ...DEFAULT_TRACKERS[0], group })
+    expect(trackerGroups([t('Food'), t('Fun'), t('Food'), t(' ')])).toEqual(['Food', 'Fun', 'Other'])
   })
 })

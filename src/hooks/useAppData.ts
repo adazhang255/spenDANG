@@ -1,13 +1,32 @@
 import { useCallback, useEffect, useState } from 'react'
+import { LEGACY_COLORS } from '../lib/colors'
+import { LEGACY_EMOJI_ICONS } from '../lib/icons'
 import { DEFAULT_TRACKERS } from '../lib/trackers'
-import type { AppData, Settings, Tracker, Transaction } from '../lib/types'
+import { COLORS, type AppData, type ColorKey, type Contribution, type Goal, type Settings, type Tracker, type Transaction } from '../lib/types'
 
 const STORAGE_KEY = 'spendang:v1'
 
 const DEFAULT_DATA: AppData = {
   transactions: [],
   trackers: DEFAULT_TRACKERS,
-  settings: { cycleStartDay: 1, theme: 'system' },
+  goals: [],
+  settings: { cycleStartDay: 1, theme: 'system', trackerView: 'cards' },
+}
+
+function migrateColor(c: string): ColorKey {
+  return (COLORS as readonly string[]).includes(c) ? (c as ColorKey) : (LEGACY_COLORS[c] ?? 'violet')
+}
+
+/** Trackers saved by older versions used `emoji` and had no group. */
+function migrateTracker(t: Tracker & { emoji?: string }): Tracker {
+  const defaults = DEFAULT_TRACKERS.find((d) => d.id === t.id)
+  const { emoji, ...rest } = t
+  return {
+    ...rest,
+    icon: t.icon ?? defaults?.icon ?? (emoji && LEGACY_EMOJI_ICONS[emoji]) ?? 'sparkles',
+    group: t.group ?? defaults?.group ?? 'Other',
+    color: migrateColor(t.color),
+  }
 }
 
 function load(): AppData {
@@ -17,7 +36,8 @@ function load(): AppData {
     const parsed = JSON.parse(raw) as Partial<AppData>
     return {
       transactions: parsed.transactions ?? [],
-      trackers: parsed.trackers ?? DEFAULT_TRACKERS,
+      trackers: (parsed.trackers ?? DEFAULT_TRACKERS).map(migrateTracker),
+      goals: parsed.goals ?? [],
       settings: { ...DEFAULT_DATA.settings, ...parsed.settings },
     }
   } catch {
@@ -69,13 +89,48 @@ export function useAppData() {
     }))
   }, [])
 
+  const saveGoal = useCallback((goal: Goal) => {
+    setData((d) => {
+      const exists = d.goals.some((g) => g.id === goal.id)
+      return { ...d, goals: exists ? d.goals.map((g) => (g.id === goal.id ? goal : g)) : [...d.goals, goal] }
+    })
+  }, [])
+
+  const deleteGoal = useCallback((id: string) => {
+    setData((d) => ({ ...d, goals: d.goals.filter((g) => g.id !== id) }))
+  }, [])
+
+  const addContribution = useCallback((goalId: string, c: Contribution) => {
+    setData((d) => ({ ...d, goals: d.goals.map((g) => (g.id === goalId ? { ...g, contributions: [...g.contributions, c] } : g)) }))
+  }, [])
+
+  const removeContribution = useCallback((goalId: string, contributionId: string) => {
+    setData((d) => ({
+      ...d,
+      goals: d.goals.map((g) => (g.id === goalId ? { ...g, contributions: g.contributions.filter((c) => c.id !== contributionId) } : g)),
+    }))
+  }, [])
+
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setData((d) => ({ ...d, settings: { ...d.settings, ...patch } }))
   }, [])
 
   const resetAll = useCallback(() => setData(DEFAULT_DATA), [])
 
-  return { data, addTransactions, updateTransaction, deleteTransactions, saveTracker, deleteTracker, updateSettings, resetAll }
+  return {
+    data,
+    addTransactions,
+    updateTransaction,
+    deleteTransactions,
+    saveTracker,
+    deleteTracker,
+    saveGoal,
+    deleteGoal,
+    addContribution,
+    removeContribution,
+    updateSettings,
+    resetAll,
+  }
 }
 
 export type AppStore = ReturnType<typeof useAppData>

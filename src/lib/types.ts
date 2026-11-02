@@ -32,14 +32,17 @@ export interface Transaction {
   trackerId?: string
 }
 
-export const COLORS = ['pink', 'peach', 'lemon', 'mint', 'sky', 'lavender'] as const
+export const COLORS = ['rose', 'orange', 'amber', 'emerald', 'sky', 'violet'] as const
 export type ColorKey = (typeof COLORS)[number]
 
 export interface Tracker {
   id: string
   name: string
-  emoji: string
+  /** Key into the icon registry (src/lib/icons.ts). */
+  icon: string
   color: ColorKey
+  /** Free-form group used to organize trackers, e.g. "Food" or "Going out". */
+  group: string
   /** Monthly (per-cycle) budget in dollars. */
   budget: number
   /** Cost of one "time" in dollars. */
@@ -52,16 +55,40 @@ export interface Tracker {
   categories: Category[]
 }
 
+export interface Contribution {
+  id: string
+  /** ISO date */
+  date: string
+  amount: number
+  note?: string
+  /** Set when the money came from a finished cycle's tracker leftovers, so a cycle is only swept once. */
+  fromCycle?: string
+}
+
+export interface Goal {
+  id: string
+  name: string
+  icon: string
+  color: ColorKey
+  target: number
+  /** Optional ISO date to hit the target by. */
+  deadline?: string
+  contributions: Contribution[]
+}
+
 export type Theme = 'light' | 'dark' | 'system'
+export type TrackerView = 'cards' | 'list'
 
 export interface Settings {
   /** Day of month a billing cycle starts on (1–28). 1 = calendar months. */
   cycleStartDay: number
   theme: Theme
+  trackerView: TrackerView
 }
 
 export interface AppData {
   transactions: Transaction[]
   trackers: Tracker[]
+  goals: Goal[]
   settings: Settings
 }

@@ -1,5 +1,6 @@
+import { ArrowLeft, FileUp, Lock } from 'lucide-react'
 import { useMemo, useRef, useState, type DragEvent } from 'react'
-import { CATEGORY_STYLE } from '../lib/colors'
+import { CATEGORY_ICONS } from '../lib/icons'
 import { analyzeCSV, rowToTransaction, type ColumnMapping, type DateFormat, type ImportOptions, type ParsedFile, type SignMode } from '../lib/csv'
 import { sampleCSV } from '../lib/sample'
 import type { Transaction } from '../lib/types'
@@ -72,21 +73,24 @@ export function ImportPanel({ onImport }: Props) {
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
           className={cx(
-            'flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed p-8 text-center transition',
-            dragging ? 'border-violet-400 bg-violet-50 dark:bg-violet-400/10' : 'border-violet-200 dark:border-white/10',
+            'flex flex-col items-center gap-3 rounded-xl border border-dashed p-8 text-center transition',
+            dragging ? 'border-zinc-900 bg-zinc-50 dark:border-zinc-100 dark:bg-white/5' : 'border-zinc-300 dark:border-white/15',
           )}
         >
-          <div className="text-4xl">📄</div>
-          <div className="font-bold">Drop your bank or card statement CSV</div>
-          <p className="max-w-md text-sm text-slate-500 dark:text-slate-400">
-            Most banks let you export transactions as CSV. Everything is parsed right here in your browser — nothing is uploaded anywhere.
-          </p>
+          <span className="grid size-11 place-items-center rounded-xl bg-zinc-100 text-zinc-600 dark:bg-white/5 dark:text-zinc-300">
+            <FileUp className="size-5" />
+          </span>
+          <div className="font-display text-lg font-bold tracking-tight">Drop a bank or card statement</div>
+          <p className="max-w-md text-sm text-zinc-500 dark:text-zinc-400">Most banks let you export transactions as a CSV file.</p>
           <div className="flex flex-wrap justify-center gap-2">
             <Button onClick={() => fileInput.current?.click()}>Choose file</Button>
-            <Button variant="soft" onClick={() => load(sampleCSV(), 'sample-statement.csv')}>
-              ✨ Try sample data
+            <Button variant="secondary" onClick={() => load(sampleCSV(), 'sample-statement.csv')}>
+              Try sample data
             </Button>
           </div>
+          <p className="inline-flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+            <Lock className="size-3.5" /> Read in your browser. Nothing is uploaded.
+          </p>
           <input ref={fileInput} type="file" accept=".csv,.tsv,.txt,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0])} />
         </div>
         <div className="mt-5">
@@ -98,7 +102,7 @@ export function ImportPanel({ onImport }: Props) {
               onChange={(e) => setText(e.target.value)}
             />
           </Field>
-          <Button className="mt-2" variant="soft" disabled={!text.trim()} onClick={() => load(text, null)}>
+          <Button className="mt-2" variant="secondary" disabled={!text.trim()} onClick={() => load(text, null)}>
             Read pasted text
           </Button>
         </div>
@@ -122,13 +126,13 @@ export function ImportPanel({ onImport }: Props) {
       <Card>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="font-bold">{fileName ?? 'Pasted CSV'}</h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
+            <h3 className="font-semibold">{fileName ?? 'Pasted CSV'}</h3>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
               {parsed.rows.length} rows found. We guessed the columns — double-check them.
             </p>
           </div>
-          <Button variant="ghost" onClick={reset}>
-            ← Start over
+          <Button variant="ghost" icon={ArrowLeft} onClick={reset}>
+            Start over
           </Button>
         </div>
 
@@ -141,7 +145,7 @@ export function ImportPanel({ onImport }: Props) {
             </Field>
           ))}
         </div>
-        <p className="mt-2 text-xs text-slate-400">Use either one Amount column, or separate Debit/Credit columns. If Amount is set, Debit/Credit are ignored.</p>
+        <p className="mt-2 text-xs text-zinc-400">Use either one Amount column, or separate Debit/Credit columns. If Amount is set, Debit/Credit are ignored.</p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <Field label="In the Amount column, purchases are…">
@@ -167,28 +171,28 @@ export function ImportPanel({ onImport }: Props) {
 
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-bold">Preview</h3>
-          <span className="text-sm text-slate-500 dark:text-slate-400">
+          <h3 className="font-semibold">Preview</h3>
+          <span className="text-sm text-zinc-500 dark:text-zinc-400">
             {good.length} ready{errors > 0 && <span className="text-rose-500"> · {errors} skipped (unreadable)</span>}
           </span>
         </div>
-        <ul className="divide-y divide-slate-100 text-sm dark:divide-white/5">
+        <ul className="divide-y divide-zinc-100 text-sm dark:divide-white/5">
           {good.slice(0, 8).map((t) => (
             <li key={t.id} className="flex items-center gap-3 py-2">
-              <span className="w-20 shrink-0 text-xs tabular-nums text-slate-400">{t.date}</span>
+              <span className="w-20 shrink-0 text-xs tabular-nums text-zinc-400">{t.date}</span>
               <span className="min-w-0 flex-1 truncate">{t.description}</span>
-              <span className="hidden shrink-0 text-xs text-slate-500 sm:inline">
-                {CATEGORY_STYLE[t.category].emoji} {t.category}
+              <span className="hidden shrink-0 items-center gap-1.5 text-xs text-zinc-500 sm:inline-flex">
+                <CategoryIcon category={t.category} /> {t.category}
               </span>
-              <span className={cx('w-20 shrink-0 text-right font-semibold tabular-nums', t.amount < 0 && 'text-emerald-600 dark:text-emerald-400')}>
+              <span className={cx('w-20 shrink-0 text-right font-medium tabular-nums', t.amount < 0 && 'text-emerald-600 dark:text-emerald-400')}>
                 {t.amount < 0 ? '+' : ''}
                 {money(Math.abs(t.amount))}
               </span>
             </li>
           ))}
         </ul>
-        {good.length > 8 && <p className="mt-2 text-xs text-slate-400">…and {good.length - 8} more</p>}
-        <p className="mt-3 text-xs text-slate-400">Purchases should show as plain amounts and refunds/income in green with a +. If it's backwards, flip the setting above.</p>
+        {good.length > 8 && <p className="mt-2 text-xs text-zinc-400">…and {good.length - 8} more</p>}
+        <p className="mt-3 text-xs text-zinc-400">Purchases show as plain amounts; refunds and income show in green with a +. If that's backwards, change the setting above.</p>
         <div className="mt-4 flex justify-end">
           <Button
             disabled={!good.length || !hasAmount}
@@ -203,4 +207,9 @@ export function ImportPanel({ onImport }: Props) {
       </Card>
     </div>
   )
+}
+
+function CategoryIcon({ category }: { category: Transaction['category'] }) {
+  const Icon = CATEGORY_ICONS[category]
+  return <Icon className="size-3.5" />
 }
