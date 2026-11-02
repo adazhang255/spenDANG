@@ -24,6 +24,8 @@ export interface Transaction {
   /** ISO date, YYYY-MM-DD */
   date: string
   description: string
+  /** The user's own note, e.g. "boba with Jess". Kept separate so the bank's description stays intact for matching. */
+  note?: string
   /** Positive = money spent, negative = money in (refund, income, payment). */
   amount: number
   category: Category

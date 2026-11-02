@@ -1,5 +1,5 @@
-import { Inbox, Plus, Search, Trash2, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Inbox, PenLine, Plus, Search, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { categorize } from '../lib/categorize'
 import { TRACKER_COLORS } from '../lib/colors'
 import { CATEGORY_ICONS } from '../lib/icons'
@@ -29,7 +29,7 @@ export function Activity({ txs, trackers, assign, defaultDate, onAdd, onUpdate, 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return txs
-      .filter((t) => (!catFilter || t.category === catFilter) && (!q || t.description.toLowerCase().includes(q)))
+      .filter((t) => (!catFilter || t.category === catFilter) && (!q || t.description.toLowerCase().includes(q) || t.note?.toLowerCase().includes(q)))
       .sort((a, b) => b.date.localeCompare(a.date))
   }, [txs, query, catFilter])
 
@@ -44,7 +44,7 @@ export function Activity({ txs, trackers, assign, defaultDate, onAdd, onUpdate, 
       <div className="flex flex-wrap gap-2">
         <div className="relative basis-full sm:basis-auto sm:flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
-          <input className={cx(inputClass, 'pl-9')} placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className={cx(inputClass, 'pl-9')} placeholder="Search descriptions and notes" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
         <select className={cx(inputClass, 'flex-1 sm:w-auto sm:flex-none')} value={catFilter} onChange={(e) => setCatFilter(e.target.value as Category | '')}>
           <option value="">All categories</option>
@@ -91,6 +91,7 @@ export function Activity({ txs, trackers, assign, defaultDate, onAdd, onUpdate, 
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium">{t.description}</span>
+                          {t.note && <span className="block truncate text-[13px] text-zinc-700 dark:text-zinc-300">{t.note}</span>}
                           <span className="flex flex-wrap items-center gap-x-2 text-xs text-zinc-500 dark:text-zinc-400">
                             {t.category}
                             {tracker && (
@@ -109,6 +110,7 @@ export function Activity({ txs, trackers, assign, defaultDate, onAdd, onUpdate, 
                       </button>
                       {open && (
                         <div className="grid gap-2 px-4 pb-3 sm:grid-cols-[1fr_1fr_auto]">
+                          <NoteInput value={t.note} onCommit={(note) => onUpdate(t.id, { note })} />
                           <select className={inputClass} value={t.category} onChange={(e) => onUpdate(t.id, { category: e.target.value as Category })} aria-label="Category">
                             {CATEGORIES.map((c) => (
                               <option key={c}>{c}</option>
@@ -140,9 +142,43 @@ export function Activity({ txs, trackers, assign, defaultDate, onAdd, onUpdate, 
   )
 }
 
+/** Edits a transaction note locally and saves on blur or Enter, so typing doesn't rewrite storage per keystroke. */
+function NoteInput({ value, onCommit }: { value?: string; onCommit: (note: string | undefined) => void }) {
+  const [draft, setDraft] = useState(value ?? '')
+  useEffect(() => setDraft(value ?? ''), [value])
+
+  const commit = () => {
+    const next = draft.trim() || undefined
+    if (next !== value) onCommit(next)
+  }
+
+  return (
+    <div className="relative sm:col-span-3">
+      <PenLine className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+      <input
+        className={cx(inputClass, 'pl-9')}
+        placeholder="Add a note, e.g. boba with Jess"
+        aria-label="Note"
+        maxLength={140}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+          if (e.key === 'Escape') {
+            setDraft(value ?? '')
+            e.currentTarget.blur()
+          }
+        }}
+      />
+    </div>
+  )
+}
+
 function AddForm({ defaultDate, onAdd }: { defaultDate: string; onAdd: (t: Transaction) => void }) {
   const [date, setDate] = useState(defaultDate || todayISO())
   const [description, setDescription] = useState('')
+  const [note, setNote] = useState('')
   const [amount, setAmount] = useState('')
   const [isIncome, setIsIncome] = useState(false)
   const [category, setCategory] = useState<Category | ''>('')
@@ -161,6 +197,7 @@ function AddForm({ defaultDate, onAdd }: { defaultDate: string; onAdd: (t: Trans
             id: uid(),
             date,
             description: description.trim(),
+            note: note.trim() || undefined,
             amount: isIncome ? -n : n,
             category: category || (isIncome ? 'Income' : guessed),
             source: 'manual',
@@ -168,7 +205,7 @@ function AddForm({ defaultDate, onAdd }: { defaultDate: string; onAdd: (t: Trans
         }}
       >
         <Field label="What">
-          <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Boba with Jess" autoFocus />
+          <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Kung Fu Tea" autoFocus />
         </Field>
         <Field label="Amount">
           <div className="flex gap-2">
@@ -196,6 +233,11 @@ function AddForm({ defaultDate, onAdd }: { defaultDate: string; onAdd: (t: Trans
             ))}
           </select>
         </Field>
+        <div className="sm:col-span-2">
+          <Field label="Note (optional)">
+            <input className={inputClass} value={note} onChange={(e) => setNote(e.target.value)} maxLength={140} placeholder="Boba with Jess after the midterm" />
+          </Field>
+        </div>
         <div className="flex justify-end sm:col-span-2">
           <Button type="submit" disabled={!valid}>
             Add transaction
