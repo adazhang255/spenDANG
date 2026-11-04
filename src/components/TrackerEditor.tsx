@@ -1,4 +1,6 @@
+import { Lightbulb } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import type { BudgetSuggestion } from '../lib/insights'
 import { CATEGORIES, NON_SPENDING, type Category, type Tracker } from '../lib/types'
 import { money, plural, uid } from '../lib/util'
 import { ColorPicker, IconPicker } from './pickers'
@@ -11,6 +13,8 @@ interface Props {
   groups: string[]
   /** Group to preselect for a new tracker. */
   defaultGroup?: string
+  /** Budget suggested from past spending, for an existing tracker. */
+  suggestion?: BudgetSuggestion
   onSave: (t: Tracker) => void
   onDelete: (id: string) => void
   onClose: () => void
@@ -29,7 +33,7 @@ const BLANK: Tracker = {
   categories: [],
 }
 
-export function TrackerEditor({ tracker, groups, defaultGroup, onSave, onDelete, onClose }: Props) {
+export function TrackerEditor({ tracker, groups, defaultGroup, suggestion, onSave, onDelete, onClose }: Props) {
   const [draft, setDraft] = useState<Tracker>(BLANK)
   const [keywordText, setKeywordText] = useState('')
 
@@ -116,6 +120,18 @@ export function TrackerEditor({ tracker, groups, defaultGroup, onSave, onDelete,
           </Field>
         </div>
 
+        {suggestion && draft.unitCost > 0 && (
+          <SuggestionHint suggestion={suggestion} unitCost={draft.unitCost} unit={draft.unit} current={draft.budget} onUse={(v) => set('budget', v)} />
+        )}
+
+        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 p-3 dark:border-white/10">
+          <input type="checkbox" className="mt-0.5 size-4 accent-zinc-900 dark:accent-zinc-100" checked={!!draft.rollover} onChange={(e) => set('rollover', e.target.checked)} />
+          <span className="text-sm">
+            <span className="font-medium">Roll over unused money</span>
+            <span className="block text-[13px] text-zinc-500 dark:text-zinc-400">Whatever you don't spend this cycle gets added to next cycle's budget. Only one cycle carries over.</span>
+          </span>
+        </label>
+
         <Field label="Icon">
           <IconPicker value={draft.icon} color={draft.color} onChange={(v) => set('icon', v)} />
         </Field>
@@ -175,5 +191,37 @@ export function TrackerEditor({ tracker, groups, defaultGroup, onSave, onDelete,
         </div>
       </div>
     </Modal>
+  )
+}
+
+function SuggestionHint({
+  suggestion,
+  unitCost,
+  unit,
+  current,
+  onUse,
+}: {
+  suggestion: BudgetSuggestion
+  unitCost: number
+  unit: string
+  current: number
+  onUse: (v: number) => void
+}) {
+  // Re-round with the draft's unit cost, which may have just been edited.
+  const suggested = Math.ceil(suggestion.average / unitCost - 1e-9) * unitCost
+  const months = `${suggestion.cycles} ${plural('cycle', suggestion.cycles)}`
+  return (
+    <div className="-mt-1 flex items-center gap-2.5 text-[13px] text-zinc-600 dark:text-zinc-300">
+      <Lightbulb className="size-4 shrink-0 text-zinc-400" />
+      <span className="flex-1">
+        Your last {months} averaged {money(suggestion.average)}.
+        {suggested !== current && <> That's about {Math.round(suggested / unitCost)} {plural(unit || 'thing', Math.round(suggested / unitCost))}.</>}
+      </span>
+      {suggested !== current && (
+        <Button type="button" size="sm" variant="secondary" onClick={() => onUse(suggested)}>
+          Use {money(suggested, true)}
+        </Button>
+      )}
+    </div>
   )
 }

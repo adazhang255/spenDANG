@@ -1,6 +1,7 @@
-import { Plus, PartyPopper } from 'lucide-react'
+import { CalendarDays, Flame, Plus, PartyPopper } from 'lucide-react'
 import { useCountUp } from '../hooks/useCountUp'
 import { TRACKER_COLORS } from '../lib/colors'
+import type { DailyPace } from '../lib/insights'
 import type { TrackerStats } from '../lib/trackers'
 import type { Tracker } from '../lib/types'
 import { money, plural } from '../lib/util'
@@ -16,6 +17,10 @@ interface Props {
   cycleEnded: boolean
   /** 0..1 through the current cycle, used for the pace hint. */
   cycleProgress: number
+  /** Consecutive finished cycles within budget. */
+  streak: number
+  /** Allowance for the rest of the current cycle, or null when not applicable. */
+  daily: DailyPace | null
   onLog: () => void
   onEdit: () => void
 }
@@ -25,7 +30,7 @@ export function paceNote(stats: TrackerStats, cycleEnded: boolean, cycleProgress
   return stats.ratio <= cycleProgress ? 'On pace' : 'Spending fast'
 }
 
-export function TrackerCard({ tracker, stats, cycleEnded, cycleProgress, onLog, onEdit }: Props) {
+export function TrackerCard({ tracker, stats, cycleEnded, cycleProgress, streak, daily, onLog, onEdit }: Props) {
   const c = TRACKER_COLORS[tracker.color]
   const shown = useCountUp(stats.timesLeft)
   const over = stats.remaining < 0
@@ -37,15 +42,19 @@ export function TrackerCard({ tracker, stats, cycleEnded, cycleProgress, onLog, 
     <div className="relative flex flex-col gap-4 rounded-2xl border border-zinc-200 bg-white p-5 transition hover:border-zinc-300 dark:border-white/[0.08] dark:bg-zinc-900 dark:hover:border-white/15">
       {celebrate && <Confetti />}
 
-      <button onClick={onEdit} className="-m-1 flex items-center gap-3 rounded-xl p-1 text-left hover:bg-zinc-50 dark:hover:bg-white/5" title="Edit tracker">
-        <IconTile icon={tracker.icon} color={tracker.color} />
-        <div className="min-w-0">
-          <div className="truncate font-semibold leading-tight">{tracker.name}</div>
-          <div className="text-[13px] text-zinc-500 dark:text-zinc-400">
-            {money(tracker.unitCost)} / {tracker.unit} · {money(tracker.budget, true)} a month
+      <div className="flex items-start justify-between gap-2">
+        <button onClick={onEdit} className="-m-1 flex min-w-0 items-center gap-3 rounded-xl p-1 text-left hover:bg-zinc-50 dark:hover:bg-white/5" title="Edit tracker">
+          <IconTile icon={tracker.icon} color={tracker.color} />
+          <div className="min-w-0">
+            <div className="truncate font-semibold leading-tight">{tracker.name}</div>
+            <div className="text-[13px] text-zinc-500 dark:text-zinc-400">
+              {money(tracker.unitCost)} / {tracker.unit} · {money(tracker.budget, true)} a month
+              {stats.carried > 0 && <span className="text-zinc-900 dark:text-zinc-100"> + {money(stats.carried)} rolled over</span>}
+            </div>
           </div>
-        </div>
-      </button>
+        </button>
+        {streak >= 2 && <StreakBadge streak={streak} unit={tracker.unit} />}
+      </div>
 
       <div className="flex items-baseline gap-2">
         <span key={stats.timesLeft} className={cx('font-display text-6xl font-bold leading-none tracking-tight tabular-nums animate-pop', over && 'text-rose-500')}>
@@ -67,7 +76,7 @@ export function TrackerCard({ tracker, stats, cycleEnded, cycleProgress, onLog, 
           ))}
         </div>
       ) : (
-        <ProgressBar ratio={1 - Math.max(0, stats.remaining) / (tracker.budget || 1)} barClass={c.bar} />
+        <ProgressBar ratio={1 - Math.max(0, stats.remaining) / (stats.budget || 1)} barClass={c.bar} />
       )}
 
       <div className="flex justify-between text-[13px] text-zinc-500 dark:text-zinc-400">
@@ -76,6 +85,13 @@ export function TrackerCard({ tracker, stats, cycleEnded, cycleProgress, onLog, 
           {over ? `${money(-stats.remaining)} over` : `${money(stats.remaining)} left`}
         </span>
       </div>
+
+      {daily && (
+        <div className="-mt-1 flex items-center gap-2 text-[13px] text-zinc-600 dark:text-zinc-300">
+          <CalendarDays className="size-4 shrink-0 text-zinc-400" />
+          <span>{dailyText(daily, tracker.unit)}</span>
+        </div>
+      )}
 
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-100 pt-3 dark:border-white/[0.06]">
         {celebrate ? (
@@ -92,5 +108,25 @@ export function TrackerCard({ tracker, stats, cycleEnded, cycleProgress, onLog, 
         </Button>
       </div>
     </div>
+  )
+}
+
+export function dailyText(d: DailyPace, unit: string): string {
+  const days = `${d.daysLeft} ${plural('day', d.daysLeft)} left`
+  if (d.unitsPerDay) return `${d.unitsPerDay} ${plural(unit, d.unitsPerDay)} a day · ${days}`
+  if (d.everyNDays) return d.everyNDays === 1 ? `1 ${unit} a day · ${days}` : `1 ${unit} every ${d.everyNDays} days · ${days}`
+  return `${money(d.perDay)} a day · ${days}`
+}
+
+export function StreakBadge({ streak, unit, compact }: { streak: number; unit?: string; compact?: boolean }) {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-md bg-orange-50 px-1.5 py-0.5 text-xs font-semibold text-orange-700 dark:bg-orange-400/10 dark:text-orange-300"
+      title={`Under budget${unit ? ` on ${plural(unit, 2)}` : ''} ${streak} cycles in a row`}
+    >
+      <Flame className="size-3.5" />
+      {streak}
+      {!compact && ' in a row'}
+    </span>
   )
 }

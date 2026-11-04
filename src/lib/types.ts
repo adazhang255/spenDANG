@@ -32,6 +32,32 @@ export interface Transaction {
   source: 'import' | 'manual'
   /** Explicit tracker assignment. `undefined` = auto-match, `'none'` = never count toward a tracker. */
   trackerId?: string
+  /** For a split expense: the part that's really yours. Overrides paybacks when set. */
+  myShare?: number
+  /** For money in: the id of the expense this repays (e.g. a friend's Venmo for dinner). */
+  paybackFor?: string
+  /** Fields the user set by hand, so a learned rule can leave them alone. */
+  edited?: EditableField[]
+}
+
+export type EditableField = 'category' | 'trackerId'
+
+/** A transaction after splits and paybacks are applied; `amount` is what counts as your spending. */
+export interface ResolvedTransaction extends Transaction {
+  /** The original bank amount, present only when it differs from `amount`. */
+  fullAmount?: number
+}
+
+/** A personal rule learned from a correction: every transaction from `merchant` gets these values. */
+export interface Rule {
+  id: string
+  /** Merchant key, see merchantKey() */
+  merchant: string
+  /** Human-friendly merchant name for display. */
+  label: string
+  category?: Category
+  /** Tracker id or 'none' */
+  trackerId?: string
 }
 
 export const COLORS = ['rose', 'orange', 'amber', 'emerald', 'sky', 'violet'] as const
@@ -55,6 +81,8 @@ export interface Tracker {
   keywords: string[]
   /** Categories that route a transaction here. */
   categories: Category[]
+  /** Carry last cycle's unused money into this one. */
+  rollover?: boolean
 }
 
 export interface Contribution {
@@ -92,5 +120,6 @@ export interface AppData {
   transactions: Transaction[]
   trackers: Tracker[]
   goals: Goal[]
+  rules: Rule[]
   settings: Settings
 }

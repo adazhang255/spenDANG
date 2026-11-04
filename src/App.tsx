@@ -4,6 +4,8 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
+  FileSpreadsheet,
   Flag,
   LayoutGrid,
   List,
@@ -14,6 +16,8 @@ import {
   Settings as SettingsIcon,
   Sun,
   Target,
+  Trash2,
+  Upload,
   type LucideIcon,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -22,16 +26,23 @@ import { Breakdown } from './components/Breakdown'
 import { Confetti } from './components/Confetti'
 import { Goals } from './components/Goals'
 import { ImportPanel } from './components/ImportPanel'
+import { SuggestBudgetsCard } from './components/SuggestBudgetsCard'
 import { TrackerCard } from './components/TrackerCard'
 import { TrackerEditor } from './components/TrackerEditor'
 import { TrackerList } from './components/TrackerList'
 import { Button, Card, EmptyState, Field, IconButton, Modal, Segmented, cx, inputClass } from './components/ui'
 import { useAppData } from './hooks/useAppData'
+import { categorize, merchantKey, merchantName } from './lib/categorize'
 import { dedupe } from './lib/csv'
-import { cycleEnd, cycleKey, cycleLabel, cycleProgress, inCycle, shiftCycle } from './lib/cycles'
+import { cycleEnd, cycleKey, cycleLabel, cycleProgress, daysLeftInCycle, inCycle, shiftCycle } from './lib/cycles'
 import { inTrackerUnits } from './lib/goals'
+import { carryIn, dailyPace, indexSpend, streak, suggestBudgets } from './lib/insights'
+import { applyRules, editedForRule, ruleFor, type RuleScope } from './lib/rules'
+import { resolveSplits } from './lib/splits'
+import { makeBackup, mergeData, parseBackup, transactionsCSV } from './lib/storage'
+import { findSubscriptions } from './lib/subscriptions'
 import { makeTrackerAssigner, trackerGroups, trackerStats, type TrackerStats } from './lib/trackers'
-import type { Goal, Theme, Tracker, Transaction } from './lib/types'
+import type { AppData, EditableField, Goal, Rule, Theme, Tracker, Transaction } from './lib/types'
 import { money, plural, todayISO, uid } from './lib/util'
 
 type Tab = 'trackers' | 'goals' | 'breakdown' | 'activity' | 'import'
@@ -49,12 +60,24 @@ const ALL = '__all__'
 interface Toast {
   id: string
   message: string
+  /** Optional action button; defaults to an "Undo" label. */
   undo?: () => void
+  actionLabel?: string
+  duration?: number
+}
+
+function download(filename: string, text: string, type: string) {
+  const url = URL.createObjectURL(new Blob([text], { type }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 export default function App() {
   const store = useAppData()
-  const { transactions, trackers, goals, settings } = store.data
+  const { transactions, trackers, goals, rules, settings } = store.data
   const today = todayISO()
   const currentCycle = cycleKey(today, settings.cycleStartDay)
 
@@ -65,6 +88,9 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
   const [celebrateKey, setCelebrateKey] = useState(0)
+  const [offerSuggestions, setOfferSuggestions] = useState(false)
+  const [pendingRule, setPendingRule] = useState<PendingRule | null>(null)
+  const [pendingRestore, setPendingRestore] = useState<AppData | null>(null)
 
   useTheme(settings.theme)
 
@@ -79,7 +105,7 @@ export default function App() {
 
   useEffect(() => {
     if (!toast) return
-    const t = setTimeout(() => setToast(null), 4500)
+    const t = setTimeout(() => setToast(null), toast.duration ?? 4500)
     return () => clearTimeout(t)
   }, [toast])
 
@@ -88,7 +114,10 @@ export default function App() {
   const activeGroup = groupFilter !== ALL && groups.includes(groupFilter) ? groupFilter : ALL
 
   const assign = useMemo(() => makeTrackerAssigner(trackers), [trackers])
-  const cycleTxs = useMemo(() => transactions.filter((t) => inCycle(t.date, cycle)), [transactions, cycle])
+  // Splits and paybacks apply across cycles, so resolve everything before filtering.
+  const resolved = useMemo(() => resolveSplits(transactions), [transactions])
+  const cycleTxs = useMemo(() => resolved.filter((t) => inCycle(t.date, cycle)), [resolved, cycle])
+  const spendIndex = useMemo(() => indexSpend(resolved, assign, settings.cycleStartDay), [resolved, assign, settings.cycleStartDay])
 
   const stats = useMemo(() => {
     const buckets = new Map<string, Transaction[]>(trackers.map((t) => [t.id, []]))
@@ -96,8 +125,22 @@ export default function App() {
       const id = assign(t)
       if (id) buckets.get(id)?.push(t)
     }
-    return new Map(trackers.map((t) => [t.id, trackerStats(t, buckets.get(t.id) ?? [])]))
-  }, [trackers, cycleTxs, assign])
+    return new Map(trackers.map((t) => [t.id, trackerStats(t, buckets.get(t.id) ?? [], carryIn(t, cycle, spendIndex))]))
+  }, [trackers, cycleTxs, assign, cycle, spendIndex])
+
+  const cycleEnded = cycleEnd(cycle) < today
+  const progress = cycleProgress(cycle, today)
+  const logDate = inCycle(today, cycle) ? today : cycleEnded ? cycleEnd(cycle) : cycle
+  const daysLeft = cycle === currentCycle ? daysLeftInCycle(cycle, today) : 0
+
+  // Streaks count finished cycles, so for the current cycle they end at the previous one.
+  const streaks = useMemo(() => {
+    const last = cycleEnded ? cycle : shiftCycle(cycle, -1)
+    return new Map(trackers.map((t) => [t.id, streak(t, last, spendIndex)]))
+  }, [trackers, cycle, cycleEnded, spendIndex])
+
+  const suggestions = useMemo(() => suggestBudgets(trackers, spendIndex, currentCycle), [trackers, spendIndex, currentCycle])
+  const subscriptions = useMemo(() => findSubscriptions(transactions, today), [transactions, today])
 
   const visibleGroups = useMemo(
     () =>
@@ -108,11 +151,52 @@ export default function App() {
     [groups, activeGroup, trackers],
   )
 
-  const cycleEnded = cycleEnd(cycle) < today
-  const progress = cycleProgress(cycle, today)
-  const logDate = inCycle(today, cycle) ? today : cycleEnded ? cycleEnd(cycle) : cycle
+  const showToast = useCallback(
+    (message: string, undo?: () => void, actionLabel?: string, duration?: number) => setToast({ id: uid(), message, undo, actionLabel, duration }),
+    [],
+  )
 
-  const showToast = useCallback((message: string, undo?: () => void) => setToast({ id: uid(), message, undo }), [])
+  /** Apply a hand correction, then offer to remember it for every transaction from that merchant. */
+  const correct = (tx: Transaction, patch: Pick<Transaction, 'category'> | Pick<Transaction, 'trackerId'>) => {
+    const field: EditableField = 'category' in patch ? 'category' : 'trackerId'
+    const value = 'category' in patch ? patch.category : patch.trackerId
+    const others = (tx.edited ?? []).filter((f) => f !== field)
+    const edited = value === undefined ? others : [...others, field]
+    store.updateTransaction(tx.id, { ...patch, edited: edited.length ? edited : undefined })
+    if (value === undefined) return // back to automatic: nothing to learn
+    const key = merchantKey(tx.description)
+    if (rules.find((r) => r.merchant === key)?.[field] === value) return
+    const name = merchantName(tx.description)
+    const rule = { merchant: key, label: name, [field]: value }
+    const past = transactions.filter((o) => o.id !== tx.id && merchantKey(o.description) === key)
+    const tracker = trackers.find((t) => t.id === value)
+    const question =
+      field === 'category' ? `Always put ${name} in ${value}?` : value === 'none' ? `Never count ${name} toward a tracker?` : `Always count ${name} toward ${tracker?.name}?`
+    showToast(
+      question,
+      () => {
+        if (past.length) setPendingRule({ rule, question, past: past.length, edited: past.filter((o) => editedForRule(o, rule)).length })
+        else saveRule(rule, 'all')
+      },
+      'Always',
+      10000,
+    )
+  }
+
+  const saveRule = (rule: Omit<Rule, 'id'>, scope: RuleScope) => {
+    store.learnRule(rule, scope)
+    setPendingRule(null)
+    showToast(`Rule saved for ${rule.label}. Manage rules in Settings.`)
+  }
+
+  const finishRestore = (next: AppData, message: string) => {
+    const before = store.data
+    store.replaceAll(next)
+    setPendingRestore(null)
+    setTab('trackers')
+    setCycle(currentCycle)
+    showToast(message, () => store.replaceAll(before), 'Undo', 10000)
+  }
 
   const logOne = (tracker: Tracker) => {
     const tx: Transaction = {
@@ -133,8 +217,13 @@ export default function App() {
   }
 
   const handleImport = (incoming: Transaction[]) => {
-    const { added, skipped } = dedupe(transactions, incoming)
+    const { added, skipped } = dedupe(
+      transactions,
+      incoming.map((t) => applyRules(t, rules)),
+    )
     store.addTransactions(added)
+    // First import: offer budgets based on real history instead of the default guesses.
+    if (!transactions.length && added.length) setOfferSuggestions(true)
     if (added.length) {
       const latest = added.reduce((m, t) => (t.date > m ? t.date : m), added[0].date)
       setCycle(cycleKey(latest, settings.cycleStartDay))
@@ -210,8 +299,22 @@ export default function App() {
               </Card>
             )}
 
+            {offerSuggestions && (
+              <SuggestBudgetsCard
+                suggestions={suggestions}
+                onApply={(picked) => {
+                  const before = picked.map((s) => s.tracker)
+                  store.saveTrackers(picked.map((s) => ({ ...s.tracker, budget: s.suggested })))
+                  setOfferSuggestions(false)
+                  showToast(`Updated ${picked.length} ${plural('budget', picked.length)}`, () => store.saveTrackers(before))
+                }}
+                onDismiss={() => setOfferSuggestions(false)}
+              />
+            )}
+
             <LeftoverCard
               key={celebrateKey}
+              daysLeft={daysLeft}
               cycle={cycle}
               trackers={trackers}
               stats={stats}
@@ -271,7 +374,7 @@ export default function App() {
                 </EmptyState>
               </Card>
             ) : settings.trackerView === 'list' ? (
-              <TrackerList groups={visibleGroups} stats={stats} showGroupHeaders={activeGroup === ALL && groups.length > 1} onLog={logOne} onEdit={setEditing} />
+              <TrackerList groups={visibleGroups} stats={stats} streaks={streaks} showGroupHeaders={activeGroup === ALL && groups.length > 1} onLog={logOne} onEdit={setEditing} />
             ) : (
               visibleGroups.map((g) => (
                 <section key={g.name} className="space-y-3">
@@ -284,6 +387,8 @@ export default function App() {
                         stats={stats.get(t.id)!}
                         cycleEnded={cycleEnded}
                         cycleProgress={progress}
+                        streak={streaks.get(t.id) ?? 0}
+                        daily={dailyPace(stats.get(t.id)!.remaining, t.unitCost, daysLeft)}
                         onLog={() => logOne(t)}
                         onEdit={() => setEditing(t)}
                       />
@@ -305,20 +410,31 @@ export default function App() {
           />
         )}
         {tab === 'breakdown' && (
-          <Breakdown cycle={cycle} cycleTxs={cycleTxs} allTxs={transactions} cycleStartDay={settings.cycleStartDay} onPickCycle={setCycle} />
+          <Breakdown
+            cycle={cycle}
+            cycleTxs={cycleTxs}
+            allTxs={resolved}
+            cycleStartDay={settings.cycleStartDay}
+            subscriptions={subscriptions}
+            today={today}
+            onPickCycle={setCycle}
+          />
         )}
         {tab === 'activity' && (
           <Activity
             txs={cycleTxs}
+            allTxs={transactions}
             trackers={trackers}
             assign={assign}
+            detect={(d) => ruleFor(d, rules)?.category ?? categorize(d)}
             defaultDate={logDate}
             onAdd={(t) => {
-              store.addTransactions([t])
+              store.addTransactions([{ ...t, trackerId: t.trackerId ?? ruleFor(t.description, rules)?.trackerId }])
               if (!inCycle(t.date, cycle)) setCycle(cycleKey(t.date, settings.cycleStartDay))
               showToast('Transaction added', () => store.deleteTransactions([t.id]))
             }}
             onUpdate={store.updateTransaction}
+            onCorrect={correct}
             onDelete={(id) => {
               const t = transactions.find((x) => x.id === id)
               store.deleteTransactions([id])
@@ -360,7 +476,7 @@ export default function App() {
                 setToast(null)
               }}
             >
-              Undo
+              {toast.actionLabel ?? 'Undo'}
             </button>
           )}
         </div>
@@ -370,10 +486,27 @@ export default function App() {
         tracker={editing}
         groups={groups}
         defaultGroup={activeGroup === ALL ? undefined : activeGroup}
+        suggestion={editing ? suggestions.find((s) => s.tracker.id === editing.id) : undefined}
         onSave={store.saveTracker}
         onDelete={store.deleteTracker}
         onClose={() => setEditing(undefined)}
       />
+
+      {pendingRule && (
+        <RuleScopeDialog pending={pendingRule} onSave={(scope) => saveRule(pendingRule.rule, scope)} onClose={() => setPendingRule(null)} />
+      )}
+
+      {pendingRestore && (
+        <RestoreDialog
+          backup={pendingRestore}
+          onMerge={() => {
+            const { data: merged, added } = mergeData(store.data, pendingRestore)
+            finishRestore(merged, `Merged: ${added.transactions} new ${plural('transaction', added.transactions)}, duplicates skipped`)
+          }}
+          onReplace={() => finishRestore(pendingRestore, 'Backup restored')}
+          onClose={() => setPendingRestore(null)}
+        />
+      )}
 
       <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings">
         <div className="space-y-5">
@@ -393,6 +526,25 @@ export default function App() {
               <option value="dark">Dark</option>
             </select>
           </Field>
+          <BackupSection
+            onBackup={() => download(`spendang-backup-${today}.json`, makeBackup(store.data), 'application/json')}
+            onExportCSV={() =>
+              download(
+                `spendang-transactions-${today}.csv`,
+                transactionsCSV(resolved, (t) => trackers.find((tr) => tr.id === assign(t))?.name ?? ''),
+                'text/csv',
+              )
+            }
+            onRestore={(text) => {
+              try {
+                setPendingRestore(parseBackup(text))
+                setSettingsOpen(false)
+              } catch (e) {
+                alert((e as Error).message)
+              }
+            }}
+          />
+          <RulesSection rules={rules} trackers={trackers} onDelete={store.deleteRule} />
           <div className="flex gap-2.5 rounded-xl bg-zinc-50 p-3 text-sm text-zinc-600 dark:bg-white/[0.03] dark:text-zinc-300">
             <Lock className="mt-0.5 size-4 shrink-0" />
             <span>
@@ -419,7 +571,7 @@ export default function App() {
 }
 
 function GroupHeader({ name, trackers, stats }: { name: string; trackers: Tracker[]; stats: Map<string, TrackerStats> }) {
-  const budget = trackers.reduce((s, t) => s + t.budget, 0)
+  const budget = trackers.reduce((s, t) => s + (stats.get(t.id)?.budget ?? t.budget), 0)
   const left = trackers.reduce((s, t) => s + (stats.get(t.id)?.remaining ?? 0), 0)
   return (
     <div className="flex items-baseline justify-between gap-2">
@@ -439,6 +591,7 @@ function LeftoverCard({
   goals,
   cycleEnded,
   celebrate,
+  daysLeft,
   onSweep,
 }: {
   cycle: string
@@ -447,6 +600,8 @@ function LeftoverCard({
   goals: Goal[]
   cycleEnded: boolean
   celebrate: boolean
+  /** Days left in the current cycle, 0 when viewing another cycle. */
+  daysLeft: number
   onSweep: (goal: Goal, amount: number) => void
 }) {
   const [goalId, setGoalId] = useState('')
@@ -466,6 +621,11 @@ function LeftoverCard({
           <div className="text-[13px] text-zinc-500 dark:text-zinc-400">{cycleEnded ? 'Left over from this cycle' : 'Left to spend this cycle'}</div>
           <div className="mt-0.5 font-display text-4xl font-bold tracking-tight tabular-nums">{money(left)}</div>
           {units && <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">That's {units}.</p>}
+          {daysLeft > 0 && left > 0 && (
+            <p className="mt-0.5 text-sm text-zinc-600 dark:text-zinc-300">
+              Or <b className="tabular-nums text-zinc-900 dark:text-zinc-100">{money(left / daysLeft)} a day</b> for the next {daysLeft} {plural('day', daysLeft)}.
+            </p>
+          )}
           {cycleEnded && allUnder && anySpent && <p className="mt-1 text-sm font-medium text-lime-700 dark:text-lime-300">You stayed under on every tracker.</p>}
         </div>
 
@@ -494,6 +654,149 @@ function LeftoverCard({
         )}
       </div>
     </Card>
+  )
+}
+
+interface PendingRule {
+  rule: Omit<Rule, 'id'>
+  question: string
+  /** Other transactions from this merchant. */
+  past: number
+  /** How many of those the user already set by hand. */
+  edited: number
+}
+
+function RuleScopeDialog({ pending, onSave, onClose }: { pending: PendingRule; onSave: (scope: RuleScope) => void; onClose: () => void }) {
+  const { past, edited } = pending
+  const [scope, setScope] = useState<RuleScope>(edited ? 'unedited' : 'all')
+  const txs = (n: number) => `${n} past ${plural('transaction', n)}`
+  const options: { value: RuleScope; label: string; hint: string }[] = [
+    { value: 'all', label: `Update all ${txs(past)}`, hint: edited ? `Including ${edited} you changed by hand.` : 'Every earlier purchase from here follows the rule.' },
+    ...(edited
+      ? [{ value: 'unedited' as const, label: `Update ${txs(past - edited)}`, hint: `Skip the ${edited} you changed by hand.` }]
+      : []),
+    { value: 'future', label: 'Only new transactions', hint: 'Leave everything already here as it is.' },
+  ]
+  return (
+    <Modal open onClose={onClose} title="Save rule">
+      <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-300">{pending.question}</p>
+      <div className="space-y-2">
+        {options.map((o) => (
+          <label
+            key={o.value}
+            className={cx(
+              'flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2.5',
+              scope === o.value ? 'border-zinc-900 dark:border-zinc-100' : 'border-zinc-200 dark:border-white/10',
+            )}
+          >
+            <input type="radio" name="rule-scope" className="mt-1 accent-zinc-900 dark:accent-zinc-100" checked={scope === o.value} onChange={() => setScope(o.value)} />
+            <span>
+              <span className="block text-sm font-medium">{o.label}</span>
+              <span className="block text-xs text-zinc-500 dark:text-zinc-400">{o.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={() => onSave(scope)}>Save rule</Button>
+      </div>
+    </Modal>
+  )
+}
+
+function RestoreDialog({ backup, onMerge, onReplace, onClose }: { backup: AppData; onMerge: () => void; onReplace: () => void; onClose: () => void }) {
+  const { transactions, trackers, goals } = backup
+  return (
+    <Modal open onClose={onClose} title="Restore backup">
+      <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-300">
+        This backup has {transactions.length} {plural('transaction', transactions.length)}, {trackers.length} {plural('tracker', trackers.length)} and {goals.length}{' '}
+        {plural('goal', goals.length)}.
+      </p>
+      <div className="space-y-2">
+        <button onClick={onMerge} className="block w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-left hover:border-zinc-900 dark:border-white/10 dark:hover:border-zinc-100">
+          <span className="block text-sm font-medium">Merge with what's here</span>
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400">Adds anything new from the backup and skips duplicates. Nothing here is deleted or changed.</span>
+        </button>
+        <button onClick={onReplace} className="block w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-left hover:border-rose-500 dark:border-white/10 dark:hover:border-rose-400">
+          <span className="block text-sm font-medium text-rose-600 dark:text-rose-400">Replace everything</span>
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400">Deletes what's in this browser now and uses the backup instead.</span>
+        </button>
+      </div>
+      <div className="mt-5 flex justify-end">
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+    </Modal>
+  )
+}
+
+function BackupSection({ onBackup, onExportCSV, onRestore }: { onBackup: () => void; onExportCSV: () => void; onRestore: (text: string) => void }) {
+  const input = useRef<HTMLInputElement>(null)
+  return (
+    <div>
+      <div className="mb-1.5 text-[13px] font-medium text-zinc-600 dark:text-zinc-400">Backup</div>
+      <p className="mb-2.5 text-[13px] text-zinc-500 dark:text-zinc-400">
+        Your data only lives in this browser. Download a backup now and then, and restore it on a new phone or after clearing your browser.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" icon={Download} onClick={onBackup}>
+          Download backup
+        </Button>
+        <Button variant="secondary" icon={Upload} onClick={() => input.current?.click()}>
+          Restore
+        </Button>
+        <Button variant="ghost" icon={FileSpreadsheet} onClick={onExportCSV}>
+          Export CSV
+        </Button>
+      </div>
+      <input
+        ref={input}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ''
+          if (f) f.text().then(onRestore)
+        }}
+      />
+    </div>
+  )
+}
+
+function RulesSection({ rules, trackers, onDelete }: { rules: Rule[]; trackers: Tracker[]; onDelete: (id: string) => void }) {
+  const describe = (r: Rule) =>
+    [
+      r.category,
+      r.trackerId === 'none' ? 'not counted toward a tracker' : r.trackerId && `counts toward ${trackers.find((t) => t.id === r.trackerId)?.name ?? 'a deleted tracker'}`,
+    ]
+      .filter(Boolean)
+      .join(', ')
+  return (
+    <div>
+      <div className="mb-1.5 text-[13px] font-medium text-zinc-600 dark:text-zinc-400">Your rules</div>
+      {rules.length ? (
+        <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-200 dark:divide-white/[0.06] dark:border-white/10">
+          {rules.map((r) => (
+            <li key={r.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{r.label}</span>
+                <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{describe(r)}</span>
+              </span>
+              <IconButton icon={Trash2} label={`Delete rule for ${r.label}`} className="size-8" onClick={() => onDelete(r.id)} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[13px] text-zinc-500 dark:text-zinc-400">
+          When you change a transaction's category or tracker, you can tell spenDANG to always do that for the merchant. Those rules show up here.
+        </p>
+      )}
+    </div>
   )
 }
 

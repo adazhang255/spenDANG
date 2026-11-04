@@ -1,7 +1,8 @@
-import { CalendarX2, TrendingDown, TrendingUp } from 'lucide-react'
+import { CalendarX2, Repeat, TrendingDown, TrendingUp } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
-import { cycleKey, cycleLabel, shiftCycle } from '../lib/cycles'
+import { cycleKey, cycleLabel, daysBetween, shiftCycle } from '../lib/cycles'
 import { CATEGORY_ICONS } from '../lib/icons'
+import type { Subscription } from '../lib/subscriptions'
 import { NON_SPENDING, type Category, type Transaction } from '../lib/types'
 import { money } from '../lib/util'
 import { Card, EmptyState, cx } from './ui'
@@ -13,10 +14,12 @@ interface Props {
   cycleTxs: Transaction[]
   allTxs: Transaction[]
   cycleStartDay: number
+  subscriptions: Subscription[]
+  today: string
   onPickCycle: (key: string) => void
 }
 
-export function Breakdown({ cycle, cycleTxs, allTxs, cycleStartDay, onPickCycle }: Props) {
+export function Breakdown({ cycle, cycleTxs, allTxs, cycleStartDay, subscriptions, today, onPickCycle }: Props) {
   const spending = cycleTxs.filter((t) => !NON_SPENDING.has(t.category))
   const spent = spending.reduce((s, t) => s + t.amount, 0)
   const moneyIn = cycleTxs.filter((t) => t.category === 'Income').reduce((s, t) => s - t.amount, 0)
@@ -120,6 +123,7 @@ export function Breakdown({ cycle, cycleTxs, allTxs, cycleStartDay, onPickCycle 
       </Card>
 
       <div className="grid gap-4 lg:col-span-2">
+        {subscriptions.length > 0 && <Subscriptions subs={subscriptions} today={today} />}
         <Card>
           <h3 className="font-semibold">Last {HISTORY} cycles</h3>
           <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">Total spending. Select a bar to jump there.</p>
@@ -196,5 +200,43 @@ function HistoryBars({ history, max, current, onPick }: { history: { key: string
         ))}
       </div>
     </div>
+  )
+}
+
+const nextFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+
+function Subscriptions({ subs, today }: { subs: Subscription[]; today: string }) {
+  const monthly = subs.reduce((s, x) => s + x.amount, 0)
+  return (
+    <Card>
+      <div className="mb-3 flex items-baseline justify-between gap-2">
+        <h3 className="inline-flex items-center gap-2 font-semibold">
+          <Repeat className="size-4 text-zinc-400" /> Subscriptions
+        </h3>
+        <span className="text-sm tabular-nums">
+          <b>{money(monthly)}</b>
+          <span className="text-zinc-500 dark:text-zinc-400">/mo</span>
+        </span>
+      </div>
+      <ul className="space-y-2.5 text-sm">
+        {subs.map((s) => {
+          const inDays = daysBetween(today, s.nextDate)
+          const soon = inDays >= 0 && inDays <= 7
+          return (
+            <li key={s.key} className="flex items-center gap-3">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{s.name}</span>
+                <span className={cx('text-xs', soon ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400')}>
+                  {inDays < 0 ? 'Was due' : 'Next'} {nextFmt.format(new Date(s.nextDate + 'T00:00'))}
+                  {soon && (inDays === 0 ? ' · today' : inDays === 1 ? ' · tomorrow' : ` · in ${inDays} days`)}
+                </span>
+              </span>
+              <span className="shrink-0 tabular-nums">{money(s.amount)}</span>
+            </li>
+          )
+        })}
+      </ul>
+      <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Found by spotting charges that repeat monthly at about the same amount.</p>
+    </Card>
   )
 }

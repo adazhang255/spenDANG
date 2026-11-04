@@ -63,6 +63,10 @@ export function makeTrackerAssigner(trackers: Tracker[]): (tx: Transaction) => s
 }
 
 export interface TrackerStats {
+  /** Budget for this cycle, including any rollover. */
+  budget: number
+  /** Money carried in from last cycle. */
+  carried: number
   spent: number
   remaining: number
   /** Whole units still affordable. */
@@ -75,17 +79,20 @@ export interface TrackerStats {
   ratio: number
 }
 
-export function trackerStats(tracker: Tracker, txs: Transaction[]): TrackerStats {
+export function trackerStats(tracker: Tracker, txs: Transaction[], carried = 0): TrackerStats {
+  const budget = tracker.budget + carried
   const spent = Math.max(0, txs.reduce((s, t) => s + t.amount, 0))
-  const remaining = tracker.budget - spent
+  const remaining = budget - spent
   const unit = tracker.unitCost > 0 ? tracker.unitCost : 1
   return {
+    budget,
+    carried,
     spent,
     remaining,
     timesLeft: Math.max(0, Math.floor((remaining + 1e-9) / unit)),
-    timesTotal: Math.floor((tracker.budget + 1e-9) / unit),
+    timesTotal: Math.floor((budget + 1e-9) / unit),
     count: txs.filter((t) => t.amount > 0).length,
-    ratio: tracker.budget > 0 ? spent / tracker.budget : spent > 0 ? 1 : 0,
+    ratio: budget > 0 ? spent / budget : spent > 0 ? 1 : 0,
   }
 }
 

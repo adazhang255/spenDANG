@@ -232,7 +232,7 @@ export function rowToTransaction(row: string[], { mapping, signMode, dateFormat 
   }
 }
 
-const txKey = (t: Pick<Transaction, 'date' | 'description' | 'amount'>) => `${t.date}|${t.description}|${t.amount}`
+export const txKey = (t: Pick<Transaction, 'date' | 'description' | 'amount'>) => `${t.date}|${t.description}|${t.amount}`
 
 /**
  * Drop incoming transactions that already exist, so re-importing an overlapping statement is
@@ -252,4 +252,13 @@ export function dedupe(existing: Transaction[], incoming: Transaction[]): { adde
     } else added.push(t)
   }
   return { added, skipped }
+}
+
+/** Serialize rows to CSV, quoting fields that contain commas, quotes or newlines. */
+export function toCSV(rows: (string | number)[][]): string {
+  const esc = (v: string | number) => {
+    const s = String(v)
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  return rows.map((r) => r.map(esc).join(',')).join('\r\n') + '\r\n'
 }

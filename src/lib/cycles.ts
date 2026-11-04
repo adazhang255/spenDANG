@@ -49,3 +49,22 @@ export function cycleProgress(key: string, today: string): number {
   const now = new Date(today).getTime()
   return Math.min(1, Math.max(0, (now - start) / (end - start)))
 }
+
+/** Whole days from `a` to `b` (ISO dates); negative if b is earlier. */
+export function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = parts(a)
+  const [by, bm, bd] = parts(b)
+  return Math.round((Date.UTC(by, bm, bd) - Date.UTC(ay, am, ad)) / 86_400_000)
+}
+
+/** Days left in the cycle counting today, or 0 if `today` is past it. */
+export function daysLeftInCycle(key: string, today: string): number {
+  return Math.max(0, daysBetween(today, cycleEnd(key)) + 1)
+}
+
+/** Same day next month, clamped to the month's last day (Jan 31 -> Feb 28). */
+export function addMonth(isoDate: string): string {
+  const [y, m, d] = parts(isoDate)
+  const last = new Date(y, m + 2, 0).getDate()
+  return iso(y, m + 1, Math.min(d, last))
+}

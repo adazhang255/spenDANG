@@ -104,3 +104,20 @@ export function categorize(description: string, bankCategory?: string): Category
   }
   return 'Other'
 }
+
+/** Display name for a merchant: drops store numbers and reference codes. "KUNG FU TEA #12" -> "Kung Fu Tea" */
+export function merchantName(description: string): string {
+  const words = description.trim().split(/\s+/)
+  const cut = words.findIndex((w, i) => i > 0 && /\d/.test(w))
+  const kept = cut > 0 ? words.slice(0, cut) : words
+  // Trailing country/company suffixes add nothing: "SPOTIFY USA" -> "SPOTIFY"
+  while (kept.length > 1 && /^(usa|us|inc|llc|ltd|corp|co)\.?$/i.test(kept[kept.length - 1])) kept.pop()
+  const name = kept.join(' ').replace(/[#*]+$/, '').trim() || description.trim()
+  // Banks shout; title-case all-caps names so they read like names.
+  return name === name.toUpperCase() ? name.toLowerCase().replace(/(^|[\s*/-])([a-z])/g, (_, p, c) => p + c.toUpperCase()) : name
+}
+
+/** Stable key identifying a merchant across transactions. */
+export function merchantKey(description: string): string {
+  return normalize(merchantName(description))
+}

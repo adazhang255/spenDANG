@@ -1,45 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { LEGACY_COLORS } from '../lib/colors'
-import { LEGACY_EMOJI_ICONS } from '../lib/icons'
-import { DEFAULT_TRACKERS } from '../lib/trackers'
-import { COLORS, type AppData, type ColorKey, type Contribution, type Goal, type Settings, type Tracker, type Transaction } from '../lib/types'
-
-const STORAGE_KEY = 'spendang:v1'
-
-const DEFAULT_DATA: AppData = {
-  transactions: [],
-  trackers: DEFAULT_TRACKERS,
-  goals: [],
-  settings: { cycleStartDay: 1, theme: 'system', trackerView: 'cards' },
-}
-
-function migrateColor(c: string): ColorKey {
-  return (COLORS as readonly string[]).includes(c) ? (c as ColorKey) : (LEGACY_COLORS[c] ?? 'violet')
-}
-
-/** Trackers saved by older versions used `emoji` and had no group. */
-function migrateTracker(t: Tracker & { emoji?: string }): Tracker {
-  const defaults = DEFAULT_TRACKERS.find((d) => d.id === t.id)
-  const { emoji, ...rest } = t
-  return {
-    ...rest,
-    icon: t.icon ?? defaults?.icon ?? (emoji && LEGACY_EMOJI_ICONS[emoji]) ?? 'sparkles',
-    group: t.group ?? defaults?.group ?? 'Other',
-    color: migrateColor(t.color),
-  }
-}
+import { applyRuleToPast, upsertRule, type RuleScope } from '../lib/rules'
+import { DEFAULT_DATA, STORAGE_KEY, migrate } from '../lib/storage'
+import type { AppData, Contribution, Goal, Rule, Settings, Tracker, Transaction } from '../lib/types'
 
 function load(): AppData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return DEFAULT_DATA
-    const parsed = JSON.parse(raw) as Partial<AppData>
-    return {
-      transactions: parsed.transactions ?? [],
-      trackers: (parsed.trackers ?? DEFAULT_TRACKERS).map(migrateTracker),
-      goals: parsed.goals ?? [],
-      settings: { ...DEFAULT_DATA.settings, ...parsed.settings },
-    }
+    return raw ? migrate(JSON.parse(raw)) : DEFAULT_DATA
   } catch {
     return DEFAULT_DATA
   }
@@ -111,6 +78,26 @@ export function useAppData() {
     }))
   }, [])
 
+  const saveTrackers = useCallback((updated: Tracker[]) => {
+    const byId = new Map(updated.map((t) => [t.id, t]))
+    setData((d) => ({ ...d, trackers: d.trackers.map((t) => byId.get(t.id) ?? t) }))
+  }, [])
+
+  /** Save a rule for this merchant and apply it to existing transactions from them, as far as `scope` allows. */
+  const learnRule = useCallback((rule: Omit<Rule, 'id'>, scope: RuleScope) => {
+    setData((d) => ({
+      ...d,
+      rules: upsertRule(d.rules, rule),
+      transactions: applyRuleToPast(d.transactions, rule, scope),
+    }))
+  }, [])
+
+  const deleteRule = useCallback((id: string) => {
+    setData((d) => ({ ...d, rules: d.rules.filter((r) => r.id !== id) }))
+  }, [])
+
+  const replaceAll = useCallback((next: AppData) => setData(next), [])
+
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setData((d) => ({ ...d, settings: { ...d.settings, ...patch } }))
   }, [])
@@ -128,6 +115,10 @@ export function useAppData() {
     deleteGoal,
     addContribution,
     removeContribution,
+    saveTrackers,
+    learnRule,
+    deleteRule,
+    replaceAll,
     updateSettings,
     resetAll,
   }
